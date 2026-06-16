@@ -1,0 +1,411 @@
+---
+# Dogtag PKI CA + ACME Responder Deployment
+#
+# Deploys a standalone Red Hat Certificate System (RHCS) CA with an ACME
+# responder subsystem on RHEL 8, using redhat-pki v11.9.
+#
+# Prerequisites:
+#   - RHEL 8.x target host with root SSH access
+#   - Active Red Hat Certificate System subscription
+#   - 389 Directory Server will be installed automatically
+#
+# Usage:
+#   ansible-playbook -i inventory deploy-dogtag-acme.yml
+#
+#   With custom variables:
+#   ansible-playbook -i inventory deploy-dogtag-acme.yml \
+#     -e pki_admin_password=MySecurePass \
+#     -e ds_password=MyDSPass \
+#     -e rhcs_repo=certsys-10.8-for-rhel-8-x86_64-rpms
+#
+# Generated-by: Claude Code (claude.ai/code)
+
+- name: Deploy Dogtag PKI CA + ACME Responder
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # PKI Instance
+    pki_instance_name: pki-tomcat
+    pki_https_port: 8443
+    pki_http_port: 8080
+
+    # Directory Server
+    ds_instance_name: pki-ds
+    ds_port: 3389
+    ds_password: "Secret.123"
+    ds_suffix: "dc=pki,dc={{ ansible_domain | default('example.com') | replace('.', ',dc=') }}"
+
+    # CA
+    pki_admin_password: "Secret.123"
+    pki_admin_uid: caadmin
+    pki_security_domain: "{{ ansible_fqdn }} Security Domain"
+    ca_db_name: ca
+    ca_base_dn: "dc=ca,{{ ds_suffix }}"
+
+    # ACME
+    acme_base_dn: "dc=acme,{{ ds_suffix }}"
+
+    # Repository
+    rhcs_repo: certsys-10.8-for-rhel-8-x86_64-rpms
+
+  tasks:
+    # =========================================================================
+    # Phase 1: Repository and Package Installation
+    # =========================================================================
+    - name: Enable RHCS repository
+      community.general.rhsm_repository:
+        name: "{{ rhcs_repo }}"
+        state: enabled
+      tags: [packages]
+
+    - name: Enable PKI module streams
+      ansible.builtin.command:
+        cmd: "dnf module enable -y {{ item }}"
+      loop:
+        - pki-deps:10.6
+        - pki-core:10.6
+        - 389-ds:1.4
+      changed_when: true
+      tags: [packages]
+
+    - name: Install RHCS and Directory Server packages
+      ansible.builtin.dnf:
+        name:
+          - redhat-pki-server
+          - redhat-pki-ca
+          - redhat-pki-acme
+          - 389-ds-base
+          - openldap-clients
+        state: present
+      tags: [packages]
+
+    - name: Verify redhat-pki-ca version
+      ansible.builtin.command: rpm -q redhat-pki-ca
+      register: pki_version
+      changed_when: false
+      tags: [packages]
+
+    - name: Display installed PKI version
+      ansible.builtin.debug:
+        msg: "{{ pki_version.stdout }}"
+      tags: [packages]
+
+    # =========================================================================
+    # Phase 2: 389 Directory Server
+    # =========================================================================
+    - name: Check if DS instance exists
+      ansible.builtin.command: dsctl {{ ds_instance_name }} status
+      register: ds_status
+      failed_when: false
+      changed_when: false
+      tags: [ds]
+
+    - name: Create DS instance configuration
+      ansible.builtin.copy:
+        dest: /tmp/ds-setup.inf
+        mode: "0600"
+        content: |
+          [general]
+          full_machine_name = {{ ansible_fqdn }}
+          start = True
+
+          [slapd]
+          instance_name = {{ ds_instance_name }}
+          port = {{ ds_port }}
+          root_dn = cn=Directory Manager
+          root_password = {{ ds_password }}
+
+          [backend-userroot]
+          suffix = {{ ds_suffix }}
+          create_suffix_entry = True
+      when: ds_status.rc != 0
+      tags: [ds]
+
+    - name: Create DS instance
+      ansible.builtin.command: dscreate from-file /tmp/ds-setup.inf
+      when: ds_status.rc != 0
+      tags: [ds]
+
+    - name: Remove DS setup file
+      ansible.builtin.file:
+        path: /tmp/ds-setup.inf
+        state: absent
+      tags: [ds]
+
+    - name: Verify DS is running
+      ansible.builtin.command: dsctl {{ ds_instance_name }} status
+      register: ds_verify
+      changed_when: false
+      failed_when: "'running' not in ds_verify.stdout"
+      tags: [ds]
+
+    # =========================================================================
+    # Phase 3: CA Subsystem (via pkispawn)
+    # =========================================================================
+    - name: Check if PKI instance exists
+      ansible.builtin.stat:
+        path: "/var/lib/pki/{{ pki_instance_name }}/ca"
+      register: pki_instance
+      tags: [ca]
+
+    - name: Create pkispawn configuration
+      ansible.builtin.copy:
+        dest: /tmp/ca.cfg
+        mode: "0600"
+        content: |
+          [DEFAULT]
+          pki_instance_name = {{ pki_instance_name }}
+          pki_https_port = {{ pki_https_port }}
+          pki_http_port = {{ pki_http_port }}
+          pki_admin_password = {{ pki_admin_password }}
+          pki_client_pkcs12_password = {{ pki_admin_password }}
+          pki_ds_hostname = {{ ansible_fqdn }}
+          pki_ds_ldap_port = {{ ds_port }}
+          pki_ds_password = {{ ds_password }}
+          pki_ds_base_dn = {{ ca_base_dn }}
+          pki_ds_database = {{ ca_db_name }}
+          pki_ds_remove_data = True
+          pki_security_domain_name = {{ pki_security_domain }}
+          pki_hostname = {{ ansible_fqdn }}
+
+          [CA]
+          pki_admin_email = {{ pki_admin_uid }}@{{ ansible_fqdn }}
+          pki_admin_name = {{ pki_admin_uid }}
+          pki_admin_nickname = PKI Administrator
+          pki_admin_uid = {{ pki_admin_uid }}
+      when: not pki_instance.stat.exists
+      tags: [ca]
+
+    - name: Deploy CA subsystem
+      ansible.builtin.command: pkispawn -f /tmp/ca.cfg -s CA
+      when: not pki_instance.stat.exists
+      register: pkispawn_result
+      tags: [ca]
+
+    - name: Remove pkispawn configuration
+      ansible.builtin.file:
+        path: /tmp/ca.cfg
+        state: absent
+      tags: [ca]
+
+    - name: Wait for CA to start
+      ansible.builtin.uri:
+        url: "https://{{ ansible_fqdn }}:{{ pki_https_port }}/ca/admin/ca/getStatus"
+        validate_certs: false
+        return_content: true
+      register: ca_status
+      retries: 12
+      delay: 10
+      until: "'running' in (ca_status.content | default(''))"
+      tags: [ca]
+
+    # =========================================================================
+    # Phase 4: ACME Responder
+    # =========================================================================
+    - name: Check if ACME is already deployed
+      ansible.builtin.stat:
+        path: "/var/lib/pki/{{ pki_instance_name }}/conf/acme"
+      register: acme_conf
+      tags: [acme]
+
+    - name: Create ACME responder
+      ansible.builtin.command: pki-server acme-create -i {{ pki_instance_name }}
+      when: not acme_conf.stat.exists
+      tags: [acme]
+
+    - name: Configure ACME database (DS backend)
+      ansible.builtin.copy:
+        dest: "/var/lib/pki/{{ pki_instance_name }}/conf/acme/database.conf"
+        owner: pkiuser
+        group: pkiuser
+        mode: "0600"
+        content: |
+          class=org.dogtagpki.acme.database.DSDatabase
+          url=ldap://{{ ansible_fqdn }}:{{ ds_port }}
+          authType=BasicAuth
+          bindDN=cn=Directory Manager
+          bindPassword={{ ds_password }}
+          baseDN={{ acme_base_dn }}
+      tags: [acme]
+
+    - name: Configure ACME issuer (PKI CA)
+      ansible.builtin.copy:
+        dest: "/var/lib/pki/{{ pki_instance_name }}/conf/acme/issuer.conf"
+        owner: pkiuser
+        group: pkiuser
+        mode: "0600"
+        content: |
+          class=org.dogtagpki.acme.issuer.PKIIssuer
+          url=https://{{ ansible_fqdn }}:{{ pki_https_port }}
+          profile=acmeServerCert
+          username={{ pki_admin_uid }}
+          password={{ pki_admin_password }}
+      tags: [acme]
+
+    - name: Configure ACME realm (DS backend)
+      ansible.builtin.copy:
+        dest: "/var/lib/pki/{{ pki_instance_name }}/conf/acme/realm.conf"
+        owner: pkiuser
+        group: pkiuser
+        mode: "0600"
+        content: |
+          class=org.dogtagpki.acme.realm.DSRealm
+          url=ldap://{{ ansible_fqdn }}:{{ ds_port }}
+          authType=BasicAuth
+          bindDN=cn=Directory Manager
+          bindPassword={{ ds_password }}
+          usersDN=ou=people,{{ acme_base_dn }}
+          groupsDN=ou=groups,{{ acme_base_dn }}
+      tags: [acme]
+
+    - name: Import ACME schema into DS
+      ansible.builtin.command: >
+        ldapmodify
+        -H ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -D "cn=Directory Manager"
+        -w {{ ds_password }}
+        -f /usr/share/pki/acme/database/ds/schema.ldif
+      register: acme_schema
+      failed_when: acme_schema.rc not in [0, 20]
+      changed_when: acme_schema.rc == 0
+      tags: [acme]
+
+    - name: Create ACME indexes in DS
+      ansible.builtin.command: >
+        ldapadd
+        -H ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -D "cn=Directory Manager"
+        -w {{ ds_password }}
+        -f /usr/share/pki/acme/database/ds/index.ldif
+      register: acme_index
+      failed_when: acme_index.rc not in [0, 68]
+      changed_when: acme_index.rc == 0
+      tags: [acme]
+
+    - name: Rebuild ACME indexes
+      ansible.builtin.command: >
+        ldapadd
+        -H ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -D "cn=Directory Manager"
+        -w {{ ds_password }}
+        -f /usr/share/pki/acme/database/ds/indextask.ldif
+      register: acme_reindex
+      failed_when: acme_reindex.rc not in [0, 68]
+      changed_when: acme_reindex.rc == 0
+      tags: [acme]
+
+    - name: Wait for reindexing
+      ansible.builtin.pause:
+        seconds: 5
+      when: acme_reindex.changed
+      tags: [acme]
+
+    - name: Create ACME database subtree
+      ansible.builtin.command: >
+        ldapadd
+        -H ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -D "cn=Directory Manager"
+        -w {{ ds_password }}
+        -f /usr/share/pki/acme/database/ds/create.ldif
+      register: acme_subtree
+      failed_when: acme_subtree.rc not in [0, 68]
+      changed_when: acme_subtree.rc == 0
+      tags: [acme]
+
+    - name: Create ACME realm entries
+      ansible.builtin.command: >
+        ldapadd
+        -H ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -D "cn=Directory Manager"
+        -w {{ ds_password }}
+        -f /usr/share/pki/acme/realm/ds/create.ldif
+      register: acme_realm
+      failed_when: acme_realm.rc not in [0, 68]
+      changed_when: acme_realm.rc == 0
+      tags: [acme]
+
+    - name: Deploy ACME web application
+      ansible.builtin.command: pki-server acme-deploy -i {{ pki_instance_name }}
+      register: acme_deploy
+      changed_when: "'already deployed' not in (acme_deploy.stderr | default(''))"
+      tags: [acme]
+
+    - name: Restart PKI server to activate ACME
+      ansible.builtin.systemd:
+        name: "pki-tomcatd@{{ pki_instance_name }}"
+        state: restarted
+      tags: [acme]
+
+    - name: Wait for ACME to become available
+      ansible.builtin.uri:
+        url: "https://{{ ansible_fqdn }}:{{ pki_https_port }}/acme/directory"
+        validate_certs: false
+        return_content: true
+      register: acme_directory
+      retries: 12
+      delay: 10
+      until: "'newNonce' in (acme_directory.content | default(''))"
+      tags: [acme]
+
+    # =========================================================================
+    # Phase 5: Verification
+    # =========================================================================
+    - name: Get installed package versions
+      ansible.builtin.command: rpm -q redhat-pki-ca redhat-pki-acme redhat-pki-server
+      register: pkg_versions
+      changed_when: false
+      tags: [verify]
+
+    - name: Get CA status
+      ansible.builtin.uri:
+        url: "https://{{ ansible_fqdn }}:{{ pki_https_port }}/ca/admin/ca/getStatus"
+        validate_certs: false
+        return_content: true
+      register: final_ca_status
+      tags: [verify]
+
+    - name: Get ACME directory
+      ansible.builtin.uri:
+        url: "https://{{ ansible_fqdn }}:{{ pki_https_port }}/acme/directory"
+        validate_certs: false
+        return_content: true
+      register: final_acme_status
+      tags: [verify]
+
+    - name: List certificates in NSS database
+      ansible.builtin.command: certutil -L -d /etc/pki/{{ pki_instance_name }}/alias
+      register: cert_list
+      changed_when: false
+      tags: [verify]
+
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DOGTAG PKI DEPLOYMENT COMPLETE
+          ============================================================
+
+          Packages:
+          {{ pkg_versions.stdout }}
+
+          CA URL:     https://{{ ansible_fqdn }}:{{ pki_https_port }}/ca
+          ACME URL:   https://{{ ansible_fqdn }}:{{ pki_https_port }}/acme/directory
+          Admin User: {{ pki_admin_uid }}
+          Admin Cert: /root/.dogtag/{{ pki_instance_name }}/ca_admin_cert.p12
+
+          Certificates:
+          {{ cert_list.stdout }}
+
+          ACME Directory:
+          {{ final_acme_status.content }}
+
+          Test with certbot:
+            certbot certonly \
+              --server https://{{ ansible_fqdn }}:{{ pki_https_port }}/acme/directory \
+              --standalone --no-verify-ssl \
+              -d test.example.com
+
+          ============================================================
+      tags: [verify]

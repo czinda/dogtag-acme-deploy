@@ -1,0 +1,15 @@
+# Dogtag PKI CA + ACME Responder - Sample Inventory
+#
+# Replace the hostname with your target RHEL 8 system.
+# The system must be registered with subscription-manager
+# and have a Red Hat Certificate System entitlement.
+
+[pki_servers]
+pki.example.com ansible_user=root
+
+# To override default variables per host:
+# pki.example.com ansible_user=root pki_admin_password=MySecurePass ds_password=MyDSPass
+
+# For multiple hosts (each gets its own standalone CA):
+# pki1.example.com ansible_user=root
+# pki2.example.com ansible_user=root
