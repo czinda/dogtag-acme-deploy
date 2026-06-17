@@ -185,6 +185,8 @@ EOF
     cat > /var/lib/pki/pki-tomcat/conf/est/authorizer.conf << EOF
 class=org.dogtagpki.est.ExternalProcessRequestAuthorizer
 executable=/usr/share/pki/est/bin/estauthz
+enrollMatchTLSSubjSAN=false
+enrollMatchSubjSAN=false
 EOF
 
     log "  Configuring realm (in-memory for testing)..."
