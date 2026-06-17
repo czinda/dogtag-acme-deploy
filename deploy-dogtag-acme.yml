@@ -63,9 +63,11 @@
     # Phase 1: Repository and Package Installation
     # =========================================================================
     - name: Enable RHCS repository
-      community.general.rhsm_repository:
-        name: "{{ rhcs_repo }}"
-        state: enabled
+      ansible.builtin.command:
+        cmd: "subscription-manager repos --enable={{ rhcs_repo }}"
+      register: rhcs_repo_result
+      changed_when: "'is enabled' in rhcs_repo_result.stdout"
+      failed_when: rhcs_repo_result.rc != 0 and 'already enabled' not in (rhcs_repo_result.stderr | default(''))
       tags: [packages]
 
     - name: Enable PKI module streams
@@ -79,14 +81,10 @@
       tags: [packages]
 
     - name: Install RHCS and Directory Server packages
-      ansible.builtin.dnf:
-        name:
-          - redhat-pki-server
-          - redhat-pki-ca
-          - redhat-pki-acme
-          - 389-ds-base
-          - openldap-clients
-        state: present
+      ansible.builtin.command:
+        cmd: "dnf install -y redhat-pki-server redhat-pki-ca redhat-pki-acme 389-ds-base openldap-clients python38"
+      register: pkg_install
+      changed_when: "'Complete!' in pkg_install.stdout"
       tags: [packages]
 
     - name: Verify redhat-pki-ca version
