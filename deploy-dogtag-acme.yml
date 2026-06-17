@@ -4,19 +4,26 @@
 # Deploys a standalone Red Hat Certificate System (RHCS) CA with an ACME
 # responder subsystem on RHEL 8, using redhat-pki v11.9.
 #
+# Supports two ACME deployment methods:
+#   acme_method: "cli"      (default) pki-server acme CLI — step-by-step, production-ready
+#   acme_method: "pkispawn"  pkispawn -s ACME — single command, good for automation
+#
 # Prerequisites:
 #   - RHEL 8.x target host with root SSH access
 #   - Active Red Hat Certificate System subscription
 #   - 389 Directory Server will be installed automatically
 #
 # Usage:
+#   # Default (pki-server CLI method):
 #   ansible-playbook -i inventory deploy-dogtag-acme.yml
 #
-#   With custom variables:
+#   # pkispawn method:
+#   ansible-playbook -i inventory deploy-dogtag-acme.yml -e acme_method=pkispawn
+#
+#   # With custom variables:
 #   ansible-playbook -i inventory deploy-dogtag-acme.yml \
 #     -e pki_admin_password=MySecurePass \
-#     -e ds_password=MyDSPass \
-#     -e rhcs_repo=certsys-10.8-for-rhel-8-x86_64-rpms
+#     -e ds_password=MyDSPass
 #
 # Generated-by: Claude Code (claude.ai/code)
 
@@ -46,6 +53,7 @@
 
     # ACME
     acme_base_dn: "dc=acme,{{ ds_suffix }}"
+    acme_method: "cli"
 
     # Repository
     rhcs_repo: certsys-10.8-for-rhel-8-x86_64-rpms
@@ -202,64 +210,72 @@
       tags: [ca]
 
     # =========================================================================
-    # Phase 4: ACME Responder
+    # Phase 4a: ACME Responder — pki-server CLI method (default)
     # =========================================================================
     - name: Check if ACME is already deployed
       ansible.builtin.stat:
-        path: "/var/lib/pki/{{ pki_instance_name }}/conf/acme"
-      register: acme_conf
+        path: "/etc/pki/{{ pki_instance_name }}/acme"
+      register: acme_conf_cli
+      when: acme_method == "cli"
       tags: [acme]
 
-    - name: Create ACME responder
+    - name: Create ACME responder (CLI method)
       ansible.builtin.command: pki-server acme-create -i {{ pki_instance_name }}
-      when: not acme_conf.stat.exists
+      when: acme_method == "cli" and not (acme_conf_cli.stat.exists | default(false))
       tags: [acme]
 
-    - name: Configure ACME database (DS backend)
-      ansible.builtin.copy:
-        dest: "/var/lib/pki/{{ pki_instance_name }}/conf/acme/database.conf"
-        owner: pkiuser
-        group: pkiuser
-        mode: "0600"
-        content: |
-          class=org.dogtagpki.acme.database.DSDatabase
-          url=ldap://{{ ansible_fqdn }}:{{ ds_port }}
-          authType=BasicAuth
-          bindDN=cn=Directory Manager
-          bindPassword={{ ds_password }}
-          baseDN={{ acme_base_dn }}
+    - name: Configure ACME database (CLI method)
+      ansible.builtin.command: >
+        pki-server acme-database-mod -i {{ pki_instance_name }} --type ds
+        -Durl=ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -DbindPassword={{ ds_password }}
+      when: acme_method == "cli"
       tags: [acme]
 
-    - name: Configure ACME issuer (PKI CA)
-      ansible.builtin.copy:
-        dest: "/var/lib/pki/{{ pki_instance_name }}/conf/acme/issuer.conf"
-        owner: pkiuser
-        group: pkiuser
-        mode: "0600"
-        content: |
-          class=org.dogtagpki.acme.issuer.PKIIssuer
-          url=https://{{ ansible_fqdn }}:{{ pki_https_port }}
-          profile=acmeServerCert
-          username={{ pki_admin_uid }}
-          password={{ pki_admin_password }}
+    - name: Configure ACME issuer (CLI method)
+      ansible.builtin.command: >
+        pki-server acme-issuer-mod -i {{ pki_instance_name }} --type pki
+        -Durl=https://{{ ansible_fqdn }}:{{ pki_https_port }}
+        -Dusername={{ pki_admin_uid }}
+        -Dpassword={{ pki_admin_password }}
+      when: acme_method == "cli"
       tags: [acme]
 
-    - name: Configure ACME realm (DS backend)
-      ansible.builtin.copy:
-        dest: "/var/lib/pki/{{ pki_instance_name }}/conf/acme/realm.conf"
-        owner: pkiuser
-        group: pkiuser
-        mode: "0600"
-        content: |
-          class=org.dogtagpki.acme.realm.DSRealm
-          url=ldap://{{ ansible_fqdn }}:{{ ds_port }}
-          authType=BasicAuth
-          bindDN=cn=Directory Manager
-          bindPassword={{ ds_password }}
-          usersDN=ou=people,{{ acme_base_dn }}
-          groupsDN=ou=groups,{{ acme_base_dn }}
+    - name: Configure ACME realm (CLI method)
+      ansible.builtin.command: >
+        pki-server acme-realm-mod -i {{ pki_instance_name }} --type ds
+        -Durl=ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -DbindPassword={{ ds_password }}
+      when: acme_method == "cli"
       tags: [acme]
 
+    # =========================================================================
+    # Phase 4b: ACME Responder — pkispawn method
+    # =========================================================================
+    - name: Check if ACME is already deployed (pkispawn)
+      ansible.builtin.stat:
+        path: "/var/lib/pki/{{ pki_instance_name }}/conf/acme"
+      register: acme_conf_spawn
+      when: acme_method == "pkispawn"
+      tags: [acme]
+
+    - name: Deploy ACME responder via pkispawn
+      ansible.builtin.command: >
+        pkispawn
+        -f /usr/share/pki/server/examples/installation/acme.cfg
+        -s ACME
+        -D acme_database_url=ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -D acme_database_bind_password={{ ds_password }}
+        -D acme_issuer_url=https://{{ ansible_fqdn }}:{{ pki_https_port }}
+        -D acme_issuer_password={{ pki_admin_password }}
+        -D acme_realm_url=ldap://{{ ansible_fqdn }}:{{ ds_port }}
+        -D acme_realm_bind_password={{ ds_password }}
+      when: acme_method == "pkispawn" and not (acme_conf_spawn.stat.exists | default(false))
+      tags: [acme]
+
+    # =========================================================================
+    # Phase 4c: ACME DS initialization (required for both methods)
+    # =========================================================================
     - name: Import ACME schema into DS
       ansible.builtin.command: >
         ldapmodify
@@ -326,10 +342,14 @@
       changed_when: acme_realm.rc == 0
       tags: [acme]
 
-    - name: Deploy ACME web application
+    # =========================================================================
+    # Phase 4d: Deploy ACME webapp (CLI method only — pkispawn already did it)
+    # =========================================================================
+    - name: Deploy ACME web application (CLI method)
       ansible.builtin.command: pki-server acme-deploy -i {{ pki_instance_name }}
       register: acme_deploy
       changed_when: "'already deployed' not in (acme_deploy.stderr | default(''))"
+      when: acme_method == "cli"
       tags: [acme]
 
     - name: Restart PKI server to activate ACME
@@ -387,6 +407,7 @@
           DOGTAG PKI DEPLOYMENT COMPLETE
           ============================================================
 
+          ACME Method:  {{ acme_method }}
           Packages:
           {{ pkg_versions.stdout }}
 
