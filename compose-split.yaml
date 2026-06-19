@@ -1,0 +1,140 @@
+# =============================================================================
+# Dogtag PKI — Multi-Container Deployment (DS + CA + ACME)
+#
+# Usage:
+#   # Build all images:
+#   RHSM_USER=<user> RHSM_PASS=<pass> podman compose -f compose-split.yaml build
+#
+#   # Start the stack:
+#   podman compose -f compose-split.yaml up -d
+#
+#   # Watch deployment progress:
+#   podman compose -f compose-split.yaml logs -f
+#
+#   # Check health:
+#   podman compose -f compose-split.yaml ps
+#
+#   # Verify endpoints:
+#   curl -sk https://localhost:8443/ca/admin/ca/getStatus   # CA
+#   curl -sk https://localhost:8444/acme/directory           # ACME
+#
+#   # Tear down:
+#   podman compose -f compose-split.yaml down -v
+#
+# Generated-by: Claude Code (claude.ai/code)
+# =============================================================================
+services:
+  # ─── 389 Directory Server ──────────────────────────────────────────────────
+  ds:
+    container_name: dogtag-ds
+    hostname: ds.pki.local
+    build:
+      context: .
+      dockerfile: containers/ds/Containerfile
+      args:
+        RHSM_USER: ${RHSM_USER}
+        RHSM_PASS: ${RHSM_PASS}
+      platforms:
+        - linux/amd64
+    privileged: true
+    ports:
+      - "3389:3389"
+    environment:
+      DS_PORT: "3389"
+      DS_PASSWORD: "${DS_PASSWORD:-Secret.123}"
+    volumes:
+      - ds-data:/var/lib/dirsrv
+      - ds-conf:/etc/dirsrv
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost:3389", "-b", "", "-s", "base"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    stop_signal: SIGRTMIN+3
+
+  # ─── Dogtag Certificate Authority ──────────────────────────────────────────
+  ca:
+    container_name: dogtag-ca
+    hostname: ca.pki.local
+    build:
+      context: .
+      dockerfile: containers/ca/Containerfile
+      args:
+        RHSM_USER: ${RHSM_USER}
+        RHSM_PASS: ${RHSM_PASS}
+      platforms:
+        - linux/amd64
+    privileged: true
+    ports:
+      - "8443:8443"
+      - "8080:8080"
+    environment:
+      DS_HOST: ds
+      DS_PORT: "3389"
+      DS_PASSWORD: "${DS_PASSWORD:-Secret.123}"
+      CA_ADMIN_PASSWORD: "${CA_ADMIN_PASSWORD:-Secret.123}"
+      CA_HOSTNAME: ca
+    depends_on:
+      ds:
+        condition: service_healthy
+    volumes:
+      - pki-ca-data:/var/lib/pki
+      - pki-ca-conf:/etc/pki
+      - shared-certs:/shared
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "https://localhost:8443/ca/admin/ca/getStatus"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+    stop_signal: SIGRTMIN+3
+
+  # ─── ACME Responder ────────────────────────────────────────────────────────
+  acme:
+    container_name: dogtag-acme
+    hostname: acme.pki.local
+    build:
+      context: .
+      dockerfile: containers/acme/Containerfile
+      args:
+        RHSM_USER: ${RHSM_USER}
+        RHSM_PASS: ${RHSM_PASS}
+      platforms:
+        - linux/amd64
+    privileged: true
+    ports:
+      - "8444:8443"
+      - "8081:8080"
+    environment:
+      DS_HOST: ds
+      DS_PORT: "3389"
+      DS_PASSWORD: "${DS_PASSWORD:-Secret.123}"
+      CA_HOST: ca
+      CA_PORT: "8443"
+      CA_ADMIN_PASSWORD: "${CA_ADMIN_PASSWORD:-Secret.123}"
+    depends_on:
+      ds:
+        condition: service_healthy
+      ca:
+        condition: service_healthy
+    volumes:
+      - pki-acme-data:/var/lib/pki
+      - pki-acme-conf:/etc/pki
+      - shared-certs:/shared:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "https://localhost:8443/acme/directory"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+    stop_signal: SIGRTMIN+3
+
+volumes:
+  ds-data:
+  ds-conf:
+  pki-ca-data:
+  pki-ca-conf:
+  pki-acme-data:
+  pki-acme-conf:
+  shared-certs:

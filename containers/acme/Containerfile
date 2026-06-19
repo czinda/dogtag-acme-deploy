@@ -1,0 +1,64 @@
+FROM registry.redhat.io/ubi8/ubi-init
+
+LABEL name="dogtag-acme" \
+      summary="Dogtag ACME Responder (RHCS 11.9, STIG-hardened)"
+
+ARG RHSM_USER
+ARG RHSM_PASS
+
+RUN echo "nameserver 8.8.8.8" > /etc/resolv.conf && \
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf && \
+    subscription-manager register \
+      --username="${RHSM_USER}" --password="${RHSM_PASS}" --auto-attach || true && \
+    subscription-manager repos \
+      --enable=certsys-10.8-for-rhel-8-x86_64-rpms || true && \
+    dnf module enable -y pki-deps:10.6 pki-core:10.6 && \
+    dnf install -y \
+      redhat-pki-server redhat-pki-acme \
+      openldap-clients hostname iproute \
+      crypto-policies-scripts fapolicyd rootfiles && \
+    dnf clean all && \
+    subscription-manager unregister || true
+
+# STIG hardening
+RUN if [ ! -f /usr/share/crypto-policies/policies/modules/STIG.pmod ]; then \
+      printf '%s\n' \
+        'min_tls_version = TLS1.2' 'min_dtls_version = DTLS1.2' \
+        'hash = -SHA1' 'sign = -RSA-PSS-SHA1 -RSA-SHA1 -ECDSA-SHA1' \
+        > /usr/share/crypto-policies/policies/modules/STIG.pmod; fi && \
+    update-crypto-policies --set FIPS:STIG && \
+    sed -i 's/gpgcheck\s*=\s*0/gpgcheck=1/g' /etc/yum.repos.d/*.repo 2>/dev/null || true && \
+    echo "localpkg_gpgcheck=1" >> /etc/dnf/dnf.conf && \
+    chmod 0740 /root/.bashrc /root/.bash_profile /root/.cshrc /root/.tcshrc /root/.bash_logout 2>/dev/null || true && \
+    printf '%s\n' \
+      'C /root/.bash_logout 600 root root - /usr/share/rootfiles/.bash_logout' \
+      'C /root/.bash_profile 600 root root - /usr/share/rootfiles/.bash_profile' \
+      'C /root/.bashrc 600 root root - /usr/share/rootfiles/.bashrc' \
+      'C /root/.cshrc 600 root root - /usr/share/rootfiles/.cshrc' \
+      'C /root/.tcshrc 600 root root - /usr/share/rootfiles/.tcshrc' \
+      > /etc/tmpfiles.d/rootfiles.conf
+
+COPY containers/acme/setup-acme.sh /usr/local/bin/setup-acme.sh
+COPY harden-stig.sh /usr/local/bin/harden-stig.sh
+RUN chmod +x /usr/local/bin/*.sh
+
+RUN cat > /etc/systemd/system/acme-deploy.service << 'UNIT'
+[Unit]
+Description=ACME Responder First-Boot Deployment
+After=network.target
+ConditionPathExists=!/var/lib/pki/.acme-deployed
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-acme.sh
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=900
+[Install]
+WantedBy=multi-user.target
+UNIT
+RUN systemctl enable acme-deploy.service
+
+EXPOSE 8443 8080
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
