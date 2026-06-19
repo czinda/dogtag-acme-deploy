@@ -1,0 +1,51 @@
+# =============================================================================
+# Dogtag PKI CA + ACME — Podman Compose / Podman Desktop
+#
+# Usage:
+#   # Build and run:
+#   RHSM_USER=<user> RHSM_PASS=<pass> podman compose up -d
+#
+#   # Watch first-boot deployment:
+#   podman logs -f dogtag-acme
+#
+#   # Verify:
+#   curl -sk https://localhost:8443/acme/directory
+#
+#   # Run tests:
+#   podman exec dogtag-acme bash /usr/local/bin/test-comprehensive.sh
+#
+#   # STIG scan:
+#   podman exec dogtag-acme bash /usr/local/bin/harden-stig.sh --scan-only
+#
+# Generated-by: Claude Code (claude.ai/code)
+# =============================================================================
+services:
+  dogtag-acme:
+    container_name: dogtag-acme
+    hostname: dev-ca-1.localdomain
+    build:
+      context: .
+      dockerfile: Containerfile
+      args:
+        RHSM_USER: ${RHSM_USER}
+        RHSM_PASS: ${RHSM_PASS}
+      platforms:
+        - linux/amd64
+    privileged: true
+    ports:
+      - "8443:8443"
+      - "8080:8080"
+      - "3389:3389"
+    tmpfs:
+      - /run
+      - /tmp
+    volumes:
+      - pki-data:/var/lib/pki
+      - pki-conf:/etc/pki
+      - ds-data:/var/lib/dirsrv
+    stop_signal: SIGRTMIN+3
+
+volumes:
+  pki-data:
+  pki-conf:
+  ds-data:

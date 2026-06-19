@@ -4,3 +4,4 @@ inventory
 logs/
 .env
 *.p12
+*.tar
