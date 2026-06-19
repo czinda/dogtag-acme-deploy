@@ -38,22 +38,22 @@ COPY containers/ds/setup-ds.sh /usr/local/bin/setup-ds.sh
 COPY harden-stig.sh /usr/local/bin/harden-stig.sh
 RUN chmod +x /usr/local/bin/*.sh
 
-RUN cat > /etc/systemd/system/ds-deploy.service << 'UNIT'
-[Unit]
-Description=389 DS First-Boot Setup
-After=network.target
-ConditionPathExists=!/var/lib/dirsrv/.deployed
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/setup-ds.sh
-RemainAfterExit=yes
-StandardOutput=journal+console
-StandardError=journal+console
-TimeoutStartSec=300
-[Install]
-WantedBy=multi-user.target
-UNIT
-RUN systemctl enable ds-deploy.service
+RUN printf '%s\n' \
+      '[Unit]' \
+      'Description=389 DS First-Boot Setup' \
+      'After=network.target' \
+      'ConditionPathExists=!/root/.ds-deployed' \
+      '[Service]' \
+      'Type=oneshot' \
+      'ExecStart=/usr/local/bin/setup-ds.sh' \
+      'RemainAfterExit=yes' \
+      'StandardOutput=journal+console' \
+      'StandardError=journal+console' \
+      'TimeoutStartSec=300' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > /etc/systemd/system/ds-deploy.service && \
+    systemctl enable ds-deploy.service
 
 EXPOSE 3389
 STOPSIGNAL SIGRTMIN+3

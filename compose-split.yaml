@@ -2,10 +2,13 @@
 # Dogtag PKI — Multi-Container Deployment (DS + CA + ACME)
 #
 # Usage:
-#   # Build all images:
-#   RHSM_USER=<user> RHSM_PASS=<pass> podman compose -f compose-split.yaml build
+#   # Build images first (requires RHSM creds):
+#   source <(op read "op://Private/age-private-key/notesPlain" | age -d -i - ~/.claude/.env.age)
+#   podman build --platform linux/amd64 --build-arg RHSM_USER=$RHSM_USERNAME --build-arg RHSM_PASS=$RHSM_PASSWORD -t dogtag-ds -f containers/ds/Containerfile .
+#   podman build --platform linux/amd64 --build-arg RHSM_USER=$RHSM_USERNAME --build-arg RHSM_PASS=$RHSM_PASSWORD -t dogtag-ca -f containers/ca/Containerfile .
+#   podman build --platform linux/amd64 --build-arg RHSM_USER=$RHSM_USERNAME --build-arg RHSM_PASS=$RHSM_PASSWORD -t dogtag-acme-split -f containers/acme/Containerfile .
 #
-#   # Start the stack:
+#   # Start the stack (uses pre-built images):
 #   podman compose -f compose-split.yaml up -d
 #
 #   # Watch deployment progress:
@@ -28,23 +31,13 @@ services:
   ds:
     container_name: dogtag-ds
     hostname: ds.pki.local
-    build:
-      context: .
-      dockerfile: containers/ds/Containerfile
-      args:
-        RHSM_USER: ${RHSM_USER}
-        RHSM_PASS: ${RHSM_PASS}
-      platforms:
-        - linux/amd64
+    image: dogtag-ds:latest
     privileged: true
     ports:
       - "3389:3389"
     environment:
       DS_PORT: "3389"
       DS_PASSWORD: "${DS_PASSWORD:-Secret.123}"
-    volumes:
-      - ds-data:/var/lib/dirsrv
-      - ds-conf:/etc/dirsrv
     healthcheck:
       test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost:3389", "-b", "", "-s", "base"]
       interval: 10s
@@ -57,14 +50,7 @@ services:
   ca:
     container_name: dogtag-ca
     hostname: ca.pki.local
-    build:
-      context: .
-      dockerfile: containers/ca/Containerfile
-      args:
-        RHSM_USER: ${RHSM_USER}
-        RHSM_PASS: ${RHSM_PASS}
-      platforms:
-        - linux/amd64
+    image: dogtag-ca:latest
     privileged: true
     ports:
       - "8443:8443"
@@ -79,8 +65,6 @@ services:
       ds:
         condition: service_healthy
     volumes:
-      - pki-ca-data:/var/lib/pki
-      - pki-ca-conf:/etc/pki
       - shared-certs:/shared
     healthcheck:
       test: ["CMD", "curl", "-sk", "https://localhost:8443/ca/admin/ca/getStatus"]
@@ -94,14 +78,7 @@ services:
   acme:
     container_name: dogtag-acme
     hostname: acme.pki.local
-    build:
-      context: .
-      dockerfile: containers/acme/Containerfile
-      args:
-        RHSM_USER: ${RHSM_USER}
-        RHSM_PASS: ${RHSM_PASS}
-      platforms:
-        - linux/amd64
+    image: dogtag-acme-split:latest
     privileged: true
     ports:
       - "8444:8443"
@@ -119,8 +96,6 @@ services:
       ca:
         condition: service_healthy
     volumes:
-      - pki-acme-data:/var/lib/pki
-      - pki-acme-conf:/etc/pki
       - shared-certs:/shared:ro
     healthcheck:
       test: ["CMD", "curl", "-sk", "https://localhost:8443/acme/directory"]
@@ -131,10 +106,4 @@ services:
     stop_signal: SIGRTMIN+3
 
 volumes:
-  ds-data:
-  ds-conf:
-  pki-ca-data:
-  pki-ca-conf:
-  pki-acme-data:
-  pki-acme-conf:
   shared-certs:

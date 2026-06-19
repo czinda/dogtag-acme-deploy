@@ -2,7 +2,7 @@
 # ACME container first-boot: deploy ACME responder with own Tomcat instance
 set -uo pipefail
 
-MARKER="/var/lib/pki/.acme-deployed"
+MARKER="/root/.acme-deployed"
 if [ -f "$MARKER" ]; then
     echo "[acme] Already deployed — skipping"
     exit 0
@@ -15,13 +15,13 @@ CA_HOST="${CA_HOST:-ca}"
 CA_PORT="${CA_PORT:-8443}"
 CA_ADMIN_PASSWORD="${CA_ADMIN_PASSWORD:-Secret.123}"
 
-echo "[acme] Waiting for systemd..."
-sleep 3
+echo "[acme] Waiting for systemd and DNS..."
+sleep 15
 
 echo "[acme] Waiting for DS at ldap://${DS_HOST}:${DS_PORT}..."
-for i in $(seq 1 60); do
+for i in $(seq 1 90); do
     ldapsearch -x -H "ldap://${DS_HOST}:${DS_PORT}" -b "" -s base &>/dev/null && break
-    echo "[acme]   Attempt $i/60 — DS not ready, waiting 5s..."
+    echo "[acme]   Attempt $i/90 — DS not ready, waiting 5s..."
     sleep 5
 done
 ldapsearch -x -H "ldap://${DS_HOST}:${DS_PORT}" -b "" -s base &>/dev/null || {

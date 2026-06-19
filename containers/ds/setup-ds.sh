@@ -2,7 +2,7 @@
 # DS container first-boot: create 389 Directory Server instance
 set -uo pipefail
 
-MARKER="/var/lib/dirsrv/.deployed"
+MARKER="/root/.ds-deployed"
 if [ -f "$MARKER" ]; then
     echo "[ds] Already deployed — skipping"
     exit 0

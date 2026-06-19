@@ -2,7 +2,7 @@
 # CA container first-boot: deploy Dogtag CA connecting to external DS
 set -uo pipefail
 
-MARKER="/var/lib/pki/.ca-deployed"
+MARKER="/root/.ca-deployed"
 if [ -f "$MARKER" ]; then
     echo "[ca] Already deployed — skipping"
     exit 0
@@ -14,13 +14,13 @@ DS_PASSWORD="${DS_PASSWORD:-Secret.123}"
 CA_ADMIN_PASSWORD="${CA_ADMIN_PASSWORD:-Secret.123}"
 CA_HOSTNAME="${CA_HOSTNAME:-ca}"
 
-echo "[ca] Waiting for systemd..."
-sleep 3
+echo "[ca] Waiting for systemd and DNS..."
+sleep 15
 
 echo "[ca] Waiting for DS at ldap://${DS_HOST}:${DS_PORT}..."
-for i in $(seq 1 60); do
+for i in $(seq 1 90); do
     ldapsearch -x -H "ldap://${DS_HOST}:${DS_PORT}" -b "" -s base &>/dev/null && break
-    echo "[ca]   Attempt $i/60 — DS not ready, waiting 5s..."
+    echo "[ca]   Attempt $i/90 — DS not ready, waiting 5s..."
     sleep 5
 done
 
@@ -38,8 +38,7 @@ pki_https_port = 8443
 pki_http_port = 8080
 pki_admin_password = ${CA_ADMIN_PASSWORD}
 pki_client_pkcs12_password = ${CA_ADMIN_PASSWORD}
-pki_ds_hostname = ${DS_HOST}
-pki_ds_ldap_port = ${DS_PORT}
+pki_ds_url = ldap://${DS_HOST}:${DS_PORT}
 pki_ds_password = ${DS_PASSWORD}
 pki_ds_base_dn = dc=ca,dc=pki,dc=example,dc=com
 pki_ds_database = ca
@@ -55,6 +54,10 @@ EOF
 
 pkispawn -f /tmp/ca.cfg -s CA
 rm -f /tmp/ca.cfg
+
+echo "[ca] Enabling Tomcat service..."
+systemctl enable pki-tomcatd@pki-tomcat
+systemctl restart pki-tomcatd@pki-tomcat
 
 echo "[ca] Waiting for CA to start..."
 for i in $(seq 1 24); do
@@ -84,9 +87,11 @@ pki -d /root/.dogtag/nssdb -c Secret.123 \
 echo "[ca] Exporting CA cert to shared volume..."
 mkdir -p /shared
 cp /tmp/ca.crt /shared/ca.crt
-cp /root/.dogtag/pki-tomcat/ca_admin_cert.p12 /shared/ca_admin_cert.p12
 chmod 644 /shared/ca.crt
-chmod 644 /shared/ca_admin_cert.p12
+if [ -f /root/.dogtag/pki-tomcat/ca_admin_cert.p12 ]; then
+    cp /root/.dogtag/pki-tomcat/ca_admin_cert.p12 /shared/ca_admin_cert.p12
+    chmod 644 /shared/ca_admin_cert.p12
+fi
 
 echo "[ca] Enabling fapolicyd..."
 systemctl enable --now fapolicyd 2>/dev/null || true

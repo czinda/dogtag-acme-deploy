@@ -42,22 +42,22 @@ COPY containers/acme/setup-acme.sh /usr/local/bin/setup-acme.sh
 COPY harden-stig.sh /usr/local/bin/harden-stig.sh
 RUN chmod +x /usr/local/bin/*.sh
 
-RUN cat > /etc/systemd/system/acme-deploy.service << 'UNIT'
-[Unit]
-Description=ACME Responder First-Boot Deployment
-After=network.target
-ConditionPathExists=!/var/lib/pki/.acme-deployed
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/setup-acme.sh
-RemainAfterExit=yes
-StandardOutput=journal+console
-StandardError=journal+console
-TimeoutStartSec=900
-[Install]
-WantedBy=multi-user.target
-UNIT
-RUN systemctl enable acme-deploy.service
+RUN printf '%s\n' \
+      '[Unit]' \
+      'Description=ACME Responder First-Boot Deployment' \
+      'After=network.target' \
+      'ConditionPathExists=!/root/.acme-deployed' \
+      '[Service]' \
+      'Type=oneshot' \
+      'ExecStart=/usr/local/bin/setup-acme.sh' \
+      'RemainAfterExit=yes' \
+      'StandardOutput=journal+console' \
+      'StandardError=journal+console' \
+      'TimeoutStartSec=900' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > /etc/systemd/system/acme-deploy.service && \
+    systemctl enable acme-deploy.service
 
 EXPOSE 8443 8080
 STOPSIGNAL SIGRTMIN+3

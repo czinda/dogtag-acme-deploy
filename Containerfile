@@ -75,65 +75,28 @@ COPY test-comprehensive.sh /usr/local/bin/test-comprehensive.sh
 RUN chmod +x /usr/local/bin/*.sh
 
 # --- Phase 5: First-boot deploy script ---
-RUN cat > /usr/local/bin/first-boot.sh << 'FIRSTBOOT'
-#!/bin/bash
-MARKER="/var/lib/pki/.deployed"
-if [ -f "$MARKER" ]; then
-    echo "[first-boot] Already deployed — skipping"
-    exit 0
-fi
-
-echo "[first-boot] Waiting for systemd..."
-sleep 5
-
-echo "[first-boot] Deploying Dogtag PKI CA + ACME..."
-/usr/local/bin/deploy-dogtag-acme.sh
-
-echo "[first-boot] Setting up pki CLI..."
-pki -d /root/.dogtag/nssdb -c Secret.123 client-init --force 2>/dev/null
-echo "Secret.123" > /root/.dogtag/nssdb/password.txt
-chmod 600 /root/.dogtag/nssdb/password.txt
-certutil -L -d /etc/pki/pki-tomcat/alias \
-  -n "caSigningCert cert-pki-tomcat CA" -a > /tmp/ca.crt
-certutil -A -d /root/.dogtag/nssdb \
-  -n "CA Signing Certificate" -t "CT,C,C" \
-  -a -i /tmp/ca.crt -f /root/.dogtag/nssdb/password.txt
-pki -d /root/.dogtag/nssdb -c Secret.123 \
-  pkcs12-import --pkcs12 /root/.dogtag/pki-tomcat/ca_admin_cert.p12 \
-  --password Secret.123 2>/dev/null
-
-echo "[first-boot] Enabling fapolicyd..."
-systemctl enable --now fapolicyd 2>/dev/null || true
-fapolicyd-cli --update 2>/dev/null || true
-
-echo "[first-boot] Adding secondary DNS..."
-grep -q "8.8.4.4" /etc/resolv.conf 2>/dev/null || \
-  echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-
-touch "$MARKER"
-echo "[first-boot] Deployment complete"
-FIRSTBOOT
-chmod +x /usr/local/bin/first-boot.sh
+COPY first-boot.sh /usr/local/bin/first-boot.sh
+RUN chmod +x /usr/local/bin/first-boot.sh
 
 # --- Phase 6: Systemd service for first boot ---
-RUN cat > /etc/systemd/system/dogtag-deploy.service << 'UNIT'
-[Unit]
-Description=Dogtag PKI First-Boot Deployment
-After=network.target
-ConditionPathExists=!/var/lib/pki/.deployed
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/first-boot.sh
-RemainAfterExit=yes
-StandardOutput=journal+console
-StandardError=journal+console
-TimeoutStartSec=900
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-RUN systemctl enable dogtag-deploy.service
+RUN printf '%s\n' \
+      '[Unit]' \
+      'Description=Dogtag PKI First-Boot Deployment' \
+      'After=network.target' \
+      'ConditionPathExists=!/var/lib/pki/.deployed' \
+      '' \
+      '[Service]' \
+      'Type=oneshot' \
+      'ExecStart=/usr/local/bin/first-boot.sh' \
+      'RemainAfterExit=yes' \
+      'StandardOutput=journal+console' \
+      'StandardError=journal+console' \
+      'TimeoutStartSec=900' \
+      '' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > /etc/systemd/system/dogtag-deploy.service && \
+    systemctl enable dogtag-deploy.service
 
 EXPOSE 8443 8080 3389
 
