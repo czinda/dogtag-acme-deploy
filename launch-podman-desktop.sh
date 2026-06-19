@@ -46,19 +46,13 @@ case "${1:-up}" in
             --build-arg RHSM_PASS="$RHSM_PASSWORD" \
             -t dogtag-ds -f "$SCRIPT_DIR/containers/ds/Containerfile" "$SCRIPT_DIR"
 
-        log "Building CA image..."
+        log "Building CA + ACME image..."
         podman build --platform linux/amd64 \
             --build-arg RHSM_USER="$RHSM_USERNAME" \
             --build-arg RHSM_PASS="$RHSM_PASSWORD" \
             -t dogtag-ca -f "$SCRIPT_DIR/containers/ca/Containerfile" "$SCRIPT_DIR"
 
-        log "Building ACME image..."
-        podman build --platform linux/amd64 \
-            --build-arg RHSM_USER="$RHSM_USERNAME" \
-            --build-arg RHSM_PASS="$RHSM_PASSWORD" \
-            -t dogtag-acme-split -f "$SCRIPT_DIR/containers/acme/Containerfile" "$SCRIPT_DIR"
-
-        log "All images built:"
+        log "Images built:"
         podman images --filter "reference=dogtag*" --format "  {{.Repository}}:{{.Tag}}  {{.Size}}"
         echo ""
         log "Now run: bash $0"
@@ -73,7 +67,7 @@ case "${1:-up}" in
 
     up|"")
         # Check images exist
-        for img in dogtag-ds dogtag-ca dogtag-acme-split; do
+        for img in dogtag-ds dogtag-ca; do
             if ! podman image exists "localhost/$img:latest" 2>/dev/null; then
                 echo -e "${RED}Image $img not found. Run: bash $0 --build${NC}"
                 exit 1
@@ -94,7 +88,7 @@ case "${1:-up}" in
         log "Endpoints (available after first-boot completes):"
         log "  DS:   ldap://localhost:3389"
         log "  CA:   https://localhost:8443/ca/admin/ca/getStatus"
-        log "  ACME: https://localhost:8444/acme/directory"
+        log "  ACME: https://localhost:8443/acme/directory"
         echo ""
         log "Podman Desktop: open the 'Pods' tab to see dogtag-pki"
         ;;

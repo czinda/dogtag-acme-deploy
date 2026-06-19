@@ -14,7 +14,7 @@ RUN echo "nameserver 8.8.8.8" > /etc/resolv.conf && \
       --enable=certsys-10.8-for-rhel-8-x86_64-rpms || true && \
     dnf module enable -y pki-deps:10.6 pki-core:10.6 && \
     dnf install -y \
-      redhat-pki-server redhat-pki-ca \
+      redhat-pki-server redhat-pki-ca redhat-pki-acme \
       openldap-clients hostname iproute \
       crypto-policies-scripts fapolicyd rootfiles && \
     dnf clean all && \

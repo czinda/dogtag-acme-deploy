@@ -1,10 +1,11 @@
 # =============================================================================
 # Dogtag PKI — Podman Desktop / Kubernetes YAML
 #
-# Three containers in one pod sharing a network namespace:
+# Two containers in one pod sharing a network namespace:
 #   - ds:   389 Directory Server (port 3389)
-#   - ca:   Dogtag CA (ports 8443, 8080)
-#   - acme: ACME Responder (ports 8444, 8081)
+#   - ca:   Dogtag CA + ACME Responder (ports 8443, 8080)
+#
+# ACME runs as a webapp inside the CA's Tomcat (Dogtag's intended design).
 #
 # Podman Desktop: Pods tab → Play Kubernetes YAML → select this file
 # CLI: podman kube play dogtag-pki-pod.yaml
@@ -38,11 +39,8 @@ spec:
           protocol: TCP
       securityContext:
         privileged: true
-      volumeMounts:
-        - name: shared-certs
-          mountPath: /shared
 
-    # ─── Dogtag Certificate Authority ────────────────────────────────────
+    # ─── Dogtag CA + ACME Responder ──────────────────────────────────────
     - name: ca
       image: localhost/dogtag-ca:latest
       env:
@@ -65,44 +63,3 @@ spec:
           protocol: TCP
       securityContext:
         privileged: true
-      volumeMounts:
-        - name: shared-certs
-          mountPath: /shared
-
-    # ─── ACME Responder ──────────────────────────────────────────────────
-    - name: acme
-      image: localhost/dogtag-acme-split:latest
-      env:
-        - name: DS_HOST
-          value: "localhost"
-        - name: DS_PORT
-          value: "3389"
-        - name: DS_PASSWORD
-          value: "Secret.123"
-        - name: CA_HOST
-          value: "localhost"
-        - name: CA_PORT
-          value: "8443"
-        - name: CA_ADMIN_PASSWORD
-          value: "Secret.123"
-        - name: ACME_HTTPS_PORT
-          value: "8444"
-        - name: ACME_HTTP_PORT
-          value: "8081"
-      ports:
-        - containerPort: 8444
-          hostPort: 8444
-          protocol: TCP
-        - containerPort: 8081
-          hostPort: 8081
-          protocol: TCP
-      securityContext:
-        privileged: true
-      volumeMounts:
-        - name: shared-certs
-          mountPath: /shared
-          readOnly: true
-
-  volumes:
-    - name: shared-certs
-      emptyDir: {}

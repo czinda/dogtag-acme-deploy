@@ -93,9 +93,54 @@ if [ -f /root/.dogtag/pki-tomcat/ca_admin_cert.p12 ]; then
     chmod 644 /shared/ca_admin_cert.p12
 fi
 
+echo "[ca] Deploying ACME responder..."
+pki-server acme-create -i pki-tomcat 2>&1 || true
+pki-server acme-database-mod -i pki-tomcat --type ds \
+    -Durl=ldap://${DS_HOST}:${DS_PORT} \
+    -DbindPassword=${DS_PASSWORD} 2>&1
+pki-server acme-issuer-mod -i pki-tomcat --type pki \
+    -Durl=https://localhost:8443 \
+    -Dusername=caadmin \
+    -Dpassword=${CA_ADMIN_PASSWORD} 2>&1
+pki-server acme-realm-mod -i pki-tomcat --type ds \
+    -Durl=ldap://${DS_HOST}:${DS_PORT} \
+    -DbindPassword=${DS_PASSWORD} 2>&1
+
+echo "[ca] Initializing ACME database in DS..."
+ldapmodify -H "ldap://${DS_HOST}:${DS_PORT}" \
+    -x -D "cn=Directory Manager" -w "${DS_PASSWORD}" \
+    -f /usr/share/pki/acme/database/ds/schema.ldif 2>&1 | tail -1 || true
+ldapadd -H "ldap://${DS_HOST}:${DS_PORT}" \
+    -x -D "cn=Directory Manager" -w "${DS_PASSWORD}" \
+    -f /usr/share/pki/acme/database/ds/index.ldif 2>/dev/null || true
+ldapadd -H "ldap://${DS_HOST}:${DS_PORT}" \
+    -x -D "cn=Directory Manager" -w "${DS_PASSWORD}" \
+    -f /usr/share/pki/acme/database/ds/indextask.ldif 2>/dev/null || true
+sleep 5
+ldapadd -H "ldap://${DS_HOST}:${DS_PORT}" \
+    -x -D "cn=Directory Manager" -w "${DS_PASSWORD}" \
+    -f /usr/share/pki/acme/database/ds/create.ldif 2>/dev/null || true
+ldapadd -H "ldap://${DS_HOST}:${DS_PORT}" \
+    -x -D "cn=Directory Manager" -w "${DS_PASSWORD}" \
+    -f /usr/share/pki/acme/realm/ds/create.ldif 2>/dev/null || true
+
+echo "[ca] Deploying ACME webapp..."
+pki-server acme-deploy -i pki-tomcat 2>&1
+
+echo "[ca] Restarting Tomcat to activate ACME..."
+systemctl restart pki-tomcatd@pki-tomcat
+sleep 15
+
+echo "[ca] Verifying ACME..."
+for i in $(seq 1 12); do
+    curl -sk https://localhost:8443/acme/directory 2>/dev/null | grep -q newNonce && break
+    sleep 10
+done
+curl -sk https://localhost:8443/acme/directory | python3 -m json.tool 2>/dev/null || echo "[ca] ACME not responding yet"
+
 echo "[ca] Enabling fapolicyd..."
 systemctl enable --now fapolicyd 2>/dev/null || true
 fapolicyd-cli --update 2>/dev/null || true
 
 touch "$MARKER"
-echo "[ca] Dogtag CA ready"
+echo "[ca] Dogtag CA + ACME ready"
