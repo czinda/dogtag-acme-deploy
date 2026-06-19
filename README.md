@@ -140,12 +140,73 @@ ansible-playbook -i inventory deploy-dogtag-acme.yml --tags acme
 └─────────────────────────────────────────┘
 ```
 
+## Container Deployment (Podman Desktop)
+
+The recommended way to run this locally. Uses Kubernetes YAML with `podman kube play`.
+
+```bash
+# 1. Build images (one-time, requires RHSM creds):
+export RHSM_USERNAME=your-user RHSM_PASSWORD=your-pass
+bash launch-podman-desktop.sh --build
+
+# 2. Launch the pod:
+bash launch-podman-desktop.sh
+
+# 3. Or open Podman Desktop → Pods → Play Kubernetes YAML → dogtag-pki-pod.yaml
+```
+
+Three containers run in a single pod:
+
+| Container | Service | Host Port |
+|-----------|---------|-----------|
+| `ds` | 389 Directory Server | 3389 |
+| `ca` | Dogtag CA v11.9 | 8443, 8080 |
+| `acme` | ACME Responder | 8444, 8081 |
+
+All containers are STIG-hardened (FIPS:STIG crypto policy, fapolicyd, gpgcheck).
+
+**Teardown:** `bash launch-podman-desktop.sh --down`
+
+See [Container Deployment wiki](../../wiki/Container-Deployment) for details on FIPS, fapolicyd, and pki CLI setup.
+
+## Multi-Container (Separate Pods)
+
+For production-like separation with independent networking:
+
+```bash
+# Uses compose with separate containers on a podman network:
+podman compose -f compose-split.yaml up -d
+```
+
+## Testing
+
+```bash
+# Basic issuance test (7 tests):
+podman exec dogtag-pki-ca bash /usr/local/bin/test-acme-issue.sh
+
+# Comprehensive test suite (11 tests):
+podman exec dogtag-pki-ca bash /usr/local/bin/test-comprehensive.sh
+
+# STIG compliance scan:
+podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
+```
+
 ## Files
 
 | File | Description |
 |------|-------------|
 | `deploy-dogtag-acme.yml` | Ansible playbook (supports `acme_method` variable) |
 | `deploy-dogtag-acme.sh` | Shell script (supports `--acme-method` flag) |
+| `deploy-dogtag-est.sh` | EST responder deployment script |
+| `dogtag-pki-pod.yaml` | **Podman Desktop / Kubernetes pod YAML (recommended)** |
+| `launch-podman-desktop.sh` | Build + launch helper for Podman Desktop |
+| `Containerfile` | Single all-in-one container image |
+| `compose.yaml` | Single-container compose file |
+| `compose-split.yaml` | Multi-container compose (DS + CA + ACME separate) |
+| `containers/` | Per-service Containerfiles and setup scripts |
+| `test-acme-issue.sh` | Certificate lifecycle test (7 tests) |
+| `test-comprehensive.sh` | Full test suite (11 tests, ECC, FIPS, CRL, OCSP) |
+| `harden-stig.sh` | DISA STIG hardening + compliance scan |
 | `inventory.example` | Sample Ansible inventory |
 
 ## License

@@ -1,0 +1,108 @@
+# =============================================================================
+# Dogtag PKI — Podman Desktop / Kubernetes YAML
+#
+# Three containers in one pod sharing a network namespace:
+#   - ds:   389 Directory Server (port 3389)
+#   - ca:   Dogtag CA (ports 8443, 8080)
+#   - acme: ACME Responder (ports 8444, 8081)
+#
+# Podman Desktop: Pods tab → Play Kubernetes YAML → select this file
+# CLI: podman kube play dogtag-pki-pod.yaml
+# Teardown: podman kube down dogtag-pki-pod.yaml
+#
+# Prerequisites:
+#   Build images first (see launch-podman-desktop.sh)
+#
+# Generated-by: Claude Code (claude.ai/code)
+# =============================================================================
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dogtag-pki
+  labels:
+    app: dogtag-pki
+spec:
+  hostname: pki.local
+  containers:
+    # ─── 389 Directory Server ────────────────────────────────────────────
+    - name: ds
+      image: localhost/dogtag-ds:latest
+      env:
+        - name: DS_PORT
+          value: "3389"
+        - name: DS_PASSWORD
+          value: "Secret.123"
+      ports:
+        - containerPort: 3389
+          hostPort: 3389
+          protocol: TCP
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: shared-certs
+          mountPath: /shared
+
+    # ─── Dogtag Certificate Authority ────────────────────────────────────
+    - name: ca
+      image: localhost/dogtag-ca:latest
+      env:
+        - name: DS_HOST
+          value: "localhost"
+        - name: DS_PORT
+          value: "3389"
+        - name: DS_PASSWORD
+          value: "Secret.123"
+        - name: CA_ADMIN_PASSWORD
+          value: "Secret.123"
+        - name: CA_HOSTNAME
+          value: "pki.local"
+      ports:
+        - containerPort: 8443
+          hostPort: 8443
+          protocol: TCP
+        - containerPort: 8080
+          hostPort: 8080
+          protocol: TCP
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: shared-certs
+          mountPath: /shared
+
+    # ─── ACME Responder ──────────────────────────────────────────────────
+    - name: acme
+      image: localhost/dogtag-acme-split:latest
+      env:
+        - name: DS_HOST
+          value: "localhost"
+        - name: DS_PORT
+          value: "3389"
+        - name: DS_PASSWORD
+          value: "Secret.123"
+        - name: CA_HOST
+          value: "localhost"
+        - name: CA_PORT
+          value: "8443"
+        - name: CA_ADMIN_PASSWORD
+          value: "Secret.123"
+        - name: ACME_HTTPS_PORT
+          value: "8444"
+        - name: ACME_HTTP_PORT
+          value: "8081"
+      ports:
+        - containerPort: 8444
+          hostPort: 8444
+          protocol: TCP
+        - containerPort: 8081
+          hostPort: 8081
+          protocol: TCP
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: shared-certs
+          mountPath: /shared
+          readOnly: true
+
+  volumes:
+    - name: shared-certs
+      emptyDir: {}

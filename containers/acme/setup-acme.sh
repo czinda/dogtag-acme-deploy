@@ -14,6 +14,8 @@ DS_PASSWORD="${DS_PASSWORD:-Secret.123}"
 CA_HOST="${CA_HOST:-ca}"
 CA_PORT="${CA_PORT:-8443}"
 CA_ADMIN_PASSWORD="${CA_ADMIN_PASSWORD:-Secret.123}"
+ACME_HTTPS_PORT="${ACME_HTTPS_PORT:-8443}"
+ACME_HTTP_PORT="${ACME_HTTP_PORT:-8080}"
 
 echo "[acme] Waiting for systemd and DNS..."
 sleep 15
@@ -79,11 +81,10 @@ pkispawn \
     -f /usr/share/pki/server/examples/installation/acme.cfg \
     -s ACME \
     -D pki_instance_name=pki-acme \
-    -D pki_https_port=8443 \
-    -D pki_http_port=8080 \
+    -D pki_https_port=${ACME_HTTPS_PORT} \
+    -D pki_http_port=${ACME_HTTP_PORT} \
     -D pki_hostname=$(hostname -f) \
-    -D pki_ds_hostname=${DS_HOST} \
-    -D pki_ds_ldap_port=${DS_PORT} \
+    -D pki_ds_url=ldap://${DS_HOST}:${DS_PORT} \
     -D pki_ds_password=${DS_PASSWORD} \
     -D acme_database_url=ldap://${DS_HOST}:${DS_PORT} \
     -D acme_database_bind_password=${DS_PASSWORD} \
@@ -98,13 +99,13 @@ sleep 15
 
 echo "[acme] Verifying ACME..."
 for i in $(seq 1 12); do
-    curl -sk https://localhost:8443/acme/directory 2>/dev/null | grep -q "newNonce" && break
+    curl -sk https://localhost:${ACME_HTTPS_PORT}/acme/directory 2>/dev/null | grep -q "newNonce" && break
     echo "[acme]   Attempt $i/12 — ACME starting, waiting 10s..."
     sleep 10
 done
 
 echo "[acme] ACME Directory:"
-curl -sk https://localhost:8443/acme/directory | python3 -m json.tool
+curl -sk https://localhost:${ACME_HTTPS_PORT}/acme/directory | python3 -m json.tool
 
 echo "[acme] Enabling fapolicyd..."
 systemctl enable --now fapolicyd 2>/dev/null || true
