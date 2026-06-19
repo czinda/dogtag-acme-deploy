@@ -40,6 +40,8 @@ RUN if [ ! -f /usr/share/crypto-policies/policies/modules/STIG.pmod ]; then \
 
 COPY containers/ca/setup-ca.sh /usr/local/bin/setup-ca.sh
 COPY harden-stig.sh /usr/local/bin/harden-stig.sh
+COPY test-acme-issue.sh /usr/local/bin/test-acme-issue.sh
+COPY test-comprehensive.sh /usr/local/bin/test-comprehensive.sh
 RUN chmod +x /usr/local/bin/*.sh
 
 RUN printf '%s\n' \
