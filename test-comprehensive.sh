@@ -19,7 +19,7 @@ CERTS_ISSUED=()
 
 run_pki() {
     pki -d /root/.dogtag/nssdb -c Secret.123 \
-        -U https://dev-ca-1.localdomain:8443 \
+        -U https://localhost:8443 \
         -n "PKI Administrator" \
         --ignore-cert-status BAD_CERT_DOMAIN \
         "$@"
@@ -246,7 +246,7 @@ if [ -n "$CERT_ID" ]; then
     run_pki ca-cert-revoke "$CERT_ID" --force --reason Key_Compromise 2>&1 | head -2
 
     log "Fetching CRL from CA..."
-    curl -sk https://dev-ca-1.localdomain:8443/ca/ee/ca/getCRL \
+    curl -sk https://localhost:8443/ca/ee/ca/getCRL \
         -d "op=getCRL&crlIssuingPoint=MasterCRL" \
         -o /tmp/t7-crl.der 2>/dev/null
 
@@ -280,7 +280,7 @@ log "Checking if certbot is available..."
 if command -v certbot &>/dev/null; then
     log "Running certbot ACME issuance..."
     certbot certonly \
-        --server https://dev-ca-1.localdomain:8443/acme/directory \
+        --server https://localhost:8443/acme/directory \
         --standalone \
         --no-verify-ssl \
         --register-unsafely-without-email \
@@ -298,7 +298,7 @@ if command -v certbot &>/dev/null; then
     fi
 else
     log "certbot not installed — testing ACME manually via curl..."
-    ACME_DIR=$(curl -sk https://dev-ca-1.localdomain:8443/acme/directory)
+    ACME_DIR=$(curl -sk https://localhost:8443/acme/directory)
     NONCE_URL=$(echo "$ACME_DIR" | python3 -c "import sys,json; print(json.load(sys.stdin)['newNonce'])")
     NONCE=$(curl -sk -I "$NONCE_URL" | grep -i replay-nonce | awk '{print $2}' | tr -d '\r')
     if [ -n "$NONCE" ]; then

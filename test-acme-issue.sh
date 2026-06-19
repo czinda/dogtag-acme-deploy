@@ -6,7 +6,7 @@
 # =============================================================================
 set -euo pipefail
 
-ACME_URL="https://dev-ca-1.localdomain:8443/acme/directory"
+ACME_URL="https://localhost:8443/acme/directory"
 DOMAIN="${1:-test.localdomain}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -16,7 +16,7 @@ fail() { echo -e "${RED}  ✗ FAIL:${NC} $*"; }
 
 run_pki() {
     pki -d /root/.dogtag/nssdb -c Secret.123 \
-        -U https://dev-ca-1.localdomain:8443 \
+        -U https://localhost:8443 \
         -n "PKI Administrator" \
         --ignore-cert-status BAD_CERT_DOMAIN \
         "$@"
