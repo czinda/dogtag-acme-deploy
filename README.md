@@ -1,10 +1,6 @@
 # Dogtag PKI CA + ACME Responder Deployment
 
-Ansible playbook and shell script to deploy a standalone **Red Hat Certificate System (RHCS)** CA with an ACME responder on RHEL 8, using `redhat-pki` v11.9.
-
-Supports two ACME deployment methods:
-- **`cli`** (default) — Step-by-step using the `pki-server acme` CLI. Recommended for production.
-- **`pkispawn`** — Single-command deployment. Best for automation and lab environments.
+Deploy a standalone **Red Hat Certificate System (RHCS) v11.9** CA with an ACME responder on RHEL 8. Six deployment methods — from one-click Podman Desktop pods to bare-metal Ansible playbooks.
 
 ## What Gets Deployed
 
@@ -15,65 +11,165 @@ Supports two ACME deployment methods:
 | PKI Server | `redhat-pki-server` | 11.9.0 |
 | Directory Server | `389-ds-base` | 1.4.x |
 
-## Prerequisites
+All container deployments include DISA STIG hardening (FIPS:STIG crypto policy, fapolicyd, gpgcheck).
 
-- RHEL 8.x target host with root SSH access
-- **Red Hat Certificate System** subscription (provides the `certsys-10.8-for-rhel-8-x86_64-rpms` repo)
-- System registered with `subscription-manager`
+## Deployment Methods
 
-## Quick Start (Ansible)
+### 1. Podman Desktop Pod (Recommended)
+
+Two containers in a Kubernetes pod — natively supported by Podman Desktop and portable to OpenShift.
 
 ```bash
-# 1. Create your inventory
-cp inventory.example inventory
-# Edit inventory with your target hostname
+# Build images (one-time, ~45 min on Apple Silicon):
+export RHSM_USERNAME=your-user RHSM_PASSWORD=your-pass
+bash launch-podman-desktop.sh --build
 
-# 2. Deploy with pki-server CLI method (default)
-ansible-playbook -i inventory deploy-dogtag-acme.yml \
-  -e pki_admin_password=YourSecurePassword \
-  -e ds_password=YourDSPassword
+# Launch:
+bash launch-podman-desktop.sh
 
-# 3. Or deploy with pkispawn method
-ansible-playbook -i inventory deploy-dogtag-acme.yml \
-  -e acme_method=pkispawn \
-  -e pki_admin_password=YourSecurePassword \
-  -e ds_password=YourDSPassword
+# Or: Podman Desktop → Pods → Play Kubernetes YAML → dogtag-pki-pod.yaml
+
+# Teardown:
+bash launch-podman-desktop.sh --down
 ```
 
-## Quick Start (Shell Script)
+| Container | Service | Host Port |
+|-----------|---------|-----------|
+| `dogtag-pki-ds` | 389 Directory Server | 3389 |
+| `dogtag-pki-ca` | Dogtag CA + ACME | 8443, 8080 |
+
+### 2. Single Container (All-in-One)
+
+Everything in one container with systemd.
 
 ```bash
-# pki-server CLI method (default)
+# Build:
+podman build --platform linux/amd64 \
+  --build-arg RHSM_USER=$RHSM_USERNAME --build-arg RHSM_PASS=$RHSM_PASSWORD \
+  -t dogtag-acme -f Containerfile .
+
+# Run:
+podman run -d --name dogtag-acme --privileged --systemd=true \
+  -p 8443:8443 -p 8080:8080 -p 3389:3389 dogtag-acme:latest
+
+# Or via compose:
+podman compose -f compose.yaml up -d
+```
+
+### 3. Multi-Container (Separate Networks)
+
+Three independent containers on a Podman network with compose healthchecks.
+
+```bash
+podman compose -f compose-split.yaml up -d
+```
+
+### 4. Shell Script (Bare Metal / VM)
+
+Direct install on a RHEL 8 host.
+
+```bash
 scp deploy-dogtag-acme.sh root@pki.example.com:
 ssh root@pki.example.com bash deploy-dogtag-acme.sh
 
-# pkispawn method
-ssh root@pki.example.com bash deploy-dogtag-acme.sh --acme-method=pkispawn
+# Options:
+#   --acme-method=pkispawn    Use pkispawn instead of CLI method
+#   --ds-password=X           Directory Manager password
+#   --admin-password=X        CA admin password
+```
 
-# With custom passwords
-ssh root@pki.example.com bash deploy-dogtag-acme.sh \
-  --ds-password=MyDSPass --admin-password=MyAdminPass
+### 5. Ansible Playbook (Remote Hosts)
+
+```bash
+cp inventory.example inventory
+# Edit with your target hostname
+
+ansible-playbook -i inventory deploy-dogtag-acme.yml \
+  -e pki_admin_password=YourPassword \
+  -e ds_password=YourDSPassword
+
+# pkispawn method:
+ansible-playbook -i inventory deploy-dogtag-acme.yml -e acme_method=pkispawn
+
+# Run individual phases:
+ansible-playbook -i inventory deploy-dogtag-acme.yml --tags acme
+```
+
+### 6. Pre-built Image Import
+
+No build required, no RHSM credentials needed.
+
+```bash
+# Export (from a machine that has built the image):
+podman save -o dogtag-acme-stig-hardened.tar dogtag-acme:stig-hardened
+
+# Import on any machine:
+podman load -i dogtag-acme-stig-hardened.tar
+podman run -d --name dogtag-acme --privileged --systemd=true \
+  -p 8443:8443 -p 8080:8080 dogtag-acme:stig-hardened
+```
+
+## Method Comparison
+
+| Method | Containers | Build Time | RHSM Needed | STIG | Portable to k8s |
+|--------|-----------|------------|-------------|------|-----------------|
+| **Pod (recommended)** | 2 | ~45 min | Build only | Yes | Yes |
+| Single container | 1 | ~45 min | Build only | Yes | No |
+| Multi-container | 3 | ~45 min | Build only | Yes | No |
+| Shell script | N/A | ~10 min | On host | Manual | No |
+| Ansible | N/A | ~10 min | On host | Manual | No |
+| Pre-built image | 1 | None | No | Yes | No |
+
+## Prerequisites
+
+**Container deployments:**
+- Podman with `podman machine` running (macOS) or native Podman (Linux)
+- `podman login registry.redhat.io` (Red Hat container registry access)
+- RHSM credentials for image builds (stored in `~/.claude/.env.age` as `RHSM_USERNAME`/`RHSM_PASSWORD`)
+- RHCS is **x86_64 only** — Apple Silicon uses `--platform linux/amd64` (QEMU emulation)
+
+**Bare-metal deployments:**
+- RHEL 8.x with root access
+- Red Hat Certificate System subscription (`certsys-10.8-for-rhel-8-x86_64-rpms`)
+- System registered with `subscription-manager`
+
+## Endpoints After Deployment
+
+| Service | URL |
+|---------|-----|
+| CA Status | `https://localhost:8443/ca/admin/ca/getStatus` |
+| ACME Directory | `https://localhost:8443/acme/directory` |
+| OCSP Responder | `http://localhost:8080/ca/ocsp` |
+| Admin Console | `https://localhost:8443/ca/services` |
+
+## Testing
+
+All test scripts are baked into container images at `/usr/local/bin/`.
+
+```bash
+# Basic issuance lifecycle (7 tests: issue → OCSP → revoke):
+podman exec dogtag-pki-ca bash /usr/local/bin/test-acme-issue.sh
+
+# Comprehensive suite (11 tests: RSA, ECC, SAN, FIPS, CRL, bulk, OCSP bug):
+podman exec dogtag-pki-ca bash /usr/local/bin/test-comprehensive.sh
+
+# STIG compliance scan (100% on 50 applicable rules):
+podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
+
+# Test with certbot:
+certbot certonly --server https://localhost:8443/acme/directory \
+  --standalone --no-verify-ssl -d test.example.com
 ```
 
 ## ACME Deployment Methods
 
-### pki-server CLI (default)
+The CA supports two methods for adding the ACME responder:
 
-Uses `pki-server acme-create`, `acme-database-mod`, `acme-issuer-mod`, `acme-realm-mod`, and `acme-deploy` — five discrete commands that configure each component individually.
+**pki-server CLI (default):** Five discrete commands — `acme-create`, `acme-database-mod --type ds`, `acme-issuer-mod --type pki`, `acme-realm-mod --type ds`, `acme-deploy`. Full control, step-by-step visibility.
 
-**Advantages:** Full control, step-by-step visibility, supports shared CA/ACME configuration, easier to troubleshoot.
-
-### pkispawn
-
-Uses `pkispawn -s ACME` with a configuration file — deploys everything in one command.
-
-**Advantages:** Simpler, fewer commands, good for automation and CI/CD.
-
-**Trade-off:** All-or-nothing — if it fails, you remove and start over.
+**pkispawn:** Single `pkispawn -s ACME` command. Simpler but all-or-nothing.
 
 ## Ansible Tags
-
-Run individual phases with `--tags`:
 
 | Tag | Phase |
 |-----|-------|
@@ -82,11 +178,6 @@ Run individual phases with `--tags`:
 | `ca` | Deploy CA subsystem via pkispawn |
 | `acme` | Configure and deploy ACME responder |
 | `verify` | Print status, certificates, and endpoints |
-
-```bash
-# Just add ACME to an existing CA
-ansible-playbook -i inventory deploy-dogtag-acme.yml --tags acme
-```
 
 ## Variables
 
@@ -100,18 +191,42 @@ ansible-playbook -i inventory deploy-dogtag-acme.yml --tags acme
 | `ds_instance_name` | `pki-ds` | Directory Server instance name |
 | `ds_port` | `3389` | DS LDAP port |
 | `ds_password` | `Secret.123` | Directory Manager password |
-| `acme_method` | `cli` | ACME deployment method (`cli` or `pkispawn`) |
+| `acme_method` | `cli` | ACME method (`cli` or `pkispawn`) |
 | `rhcs_repo` | `certsys-10.8-for-rhel-8-x86_64-rpms` | RHCS repo ID |
 
-## Endpoints After Deployment
+## Security
 
-| Service | URL |
-|---------|-----|
-| CA | `https://<hostname>:8443/ca` |
-| ACME Directory | `https://<hostname>:8443/acme/directory` |
-| Admin Console | `https://<hostname>:8443/ca/services` |
+Container deployments are STIG-hardened with:
+
+| Control | Detail |
+|---------|--------|
+| Crypto policy | `FIPS:STIG` — TLS 1.2 minimum, SHA-1 disabled for signatures |
+| fapolicyd | Application whitelisting (enforcing mode) |
+| gpgcheck | Enabled for all repos and local packages |
+| STIG score | 100% (50/50 applicable rules) |
+
+Run `harden-stig.sh` on bare-metal deployments to apply the same hardening.
 
 ## Architecture
+
+### Pod (Recommended)
+
+```
+┌──────────── dogtag-pki pod ─────────────┐
+│  Shared network namespace (localhost)   │
+│                                         │
+│  ┌──────────┐   ┌───────────────────┐   │
+│  │    DS     │   │     CA + ACME     │   │
+│  │  389 DS   │   │  pki-tomcat       │   │
+│  │  :3389    │◄──│  :8443 /ca        │   │
+│  │           │   │  :8443 /acme      │   │
+│  │  dc=ca    │   │  :8080 /ca/ocsp   │   │
+│  │  dc=acme  │   │                   │   │
+│  └──────────┘   └───────────────────┘   │
+└─────────────────────────────────────────┘
+```
+
+### Bare Metal
 
 ```
 ┌─────────────────────────────────────────┐
@@ -133,81 +248,37 @@ ansible-playbook -i inventory deploy-dogtag-acme.yml --tags acme
 │  │  ┌──────────┐  ┌────────────┐  │    │
 │  │  │ CA Data  │  │ ACME Data  │  │    │
 │  │  │ (certs,  │  │ (accounts, │  │    │
-│  │  │  CRLs,   │  │  orders,   │  │    │
-│  │  │  reqs)   │  │  authz)    │  │    │
+│  │  │  CRLs)   │  │  orders)   │  │    │
 │  │  └──────────┘  └────────────┘  │    │
 │  └─────────────────────────────────┘    │
 └─────────────────────────────────────────┘
-```
-
-## Container Deployment (Podman Desktop)
-
-The recommended way to run this locally. Uses Kubernetes YAML with `podman kube play`.
-
-```bash
-# 1. Build images (one-time, requires RHSM creds):
-export RHSM_USERNAME=your-user RHSM_PASSWORD=your-pass
-bash launch-podman-desktop.sh --build
-
-# 2. Launch the pod:
-bash launch-podman-desktop.sh
-
-# 3. Or open Podman Desktop → Pods → Play Kubernetes YAML → dogtag-pki-pod.yaml
-```
-
-Three containers run in a single pod:
-
-| Container | Service | Host Port |
-|-----------|---------|-----------|
-| `ds` | 389 Directory Server | 3389 |
-| `ca` | Dogtag CA v11.9 | 8443, 8080 |
-| `acme` | ACME Responder | 8444, 8081 |
-
-All containers are STIG-hardened (FIPS:STIG crypto policy, fapolicyd, gpgcheck).
-
-**Teardown:** `bash launch-podman-desktop.sh --down`
-
-See [Container Deployment wiki](../../wiki/Container-Deployment) for details on FIPS, fapolicyd, and pki CLI setup.
-
-## Multi-Container (Separate Pods)
-
-For production-like separation with independent networking:
-
-```bash
-# Uses compose with separate containers on a podman network:
-podman compose -f compose-split.yaml up -d
-```
-
-## Testing
-
-```bash
-# Basic issuance test (7 tests):
-podman exec dogtag-pki-ca bash /usr/local/bin/test-acme-issue.sh
-
-# Comprehensive test suite (11 tests):
-podman exec dogtag-pki-ca bash /usr/local/bin/test-comprehensive.sh
-
-# STIG compliance scan:
-podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
 ```
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `deploy-dogtag-acme.yml` | Ansible playbook (supports `acme_method` variable) |
-| `deploy-dogtag-acme.sh` | Shell script (supports `--acme-method` flag) |
-| `deploy-dogtag-est.sh` | EST responder deployment script |
-| `dogtag-pki-pod.yaml` | **Podman Desktop / Kubernetes pod YAML (recommended)** |
-| `launch-podman-desktop.sh` | Build + launch helper for Podman Desktop |
+| **Podman Desktop** | |
+| `dogtag-pki-pod.yaml` | Kubernetes pod YAML (recommended) |
+| `launch-podman-desktop.sh` | Build + launch + teardown helper |
+| **Container** | |
 | `Containerfile` | Single all-in-one container image |
-| `compose.yaml` | Single-container compose file |
+| `compose.yaml` | Single-container compose |
 | `compose-split.yaml` | Multi-container compose (DS + CA + ACME separate) |
-| `containers/` | Per-service Containerfiles and setup scripts |
-| `test-acme-issue.sh` | Certificate lifecycle test (7 tests) |
-| `test-comprehensive.sh` | Full test suite (11 tests, ECC, FIPS, CRL, OCSP) |
-| `harden-stig.sh` | DISA STIG hardening + compliance scan |
+| `containers/{ds,ca,acme}/` | Per-service Containerfiles and setup scripts |
+| **Bare Metal** | |
+| `deploy-dogtag-acme.sh` | Shell script (6 phases) |
+| `deploy-dogtag-acme.yml` | Ansible playbook |
+| `deploy-dogtag-est.sh` | EST responder deployment |
 | `inventory.example` | Sample Ansible inventory |
+| **Testing & Security** | |
+| `test-acme-issue.sh` | Certificate lifecycle test (7 tests) |
+| `test-comprehensive.sh` | Full test suite (11 tests) |
+| `harden-stig.sh` | DISA STIG hardening + compliance scan |
+
+## Known Issues
+
+- [DOGTAG-4465](https://redhat.atlassian.net/browse/DOGTAG-4465): pki CLI reports cert as revoked while OCSP returns good — divergent NSS (AIA-based) vs LDAP validation paths
 
 ## License
 
