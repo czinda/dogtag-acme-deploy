@@ -56,11 +56,11 @@ deploy:
     - |
       echo "Waiting for CA + ACME..."
       for i in $(seq 1 60); do
-        podman exec dogtag-pki-ca curl -sk https://localhost:18443/acme/directory 2>/dev/null | grep -q newNonce && break
+        podman exec dogtag-pki-ca curl -sk https://localhost:8443/acme/directory 2>/dev/null | grep -q newNonce && break
         sleep 10
       done
-    - podman exec dogtag-pki-ca curl -sk https://localhost:18443/ca/admin/ca/getStatus
-    - podman exec dogtag-pki-ca curl -sk https://localhost:18443/acme/directory
+    - podman exec dogtag-pki-ca curl -sk https://localhost:8443/ca/admin/ca/getStatus
+    - podman exec dogtag-pki-ca curl -sk https://localhost:8443/acme/directory
   after_script:
     - podman pod ps
     - podman ps --filter pod=dogtag-pki
