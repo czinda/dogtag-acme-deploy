@@ -1,0 +1,46 @@
+# CI/CD variant — uses offset ports to avoid conflicts on shared runners
+# DS: 13389, CA: 18443/18080
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dogtag-pki
+  labels:
+    app: dogtag-pki
+spec:
+  hostname: pki.local
+  containers:
+    - name: ds
+      image: localhost/dogtag-ds:latest
+      env:
+        - name: DS_PORT
+          value: "3389"
+        - name: DS_PASSWORD
+          value: "Secret.123"
+      ports:
+        - containerPort: 3389
+          hostPort: 13389
+          protocol: TCP
+      securityContext:
+        privileged: true
+    - name: ca
+      image: localhost/dogtag-ca:latest
+      env:
+        - name: DS_HOST
+          value: "localhost"
+        - name: DS_PORT
+          value: "3389"
+        - name: DS_PASSWORD
+          value: "Secret.123"
+        - name: CA_ADMIN_PASSWORD
+          value: "Secret.123"
+        - name: CA_HOSTNAME
+          value: "pki.local"
+      ports:
+        - containerPort: 8443
+          hostPort: 18443
+          protocol: TCP
+        - containerPort: 8080
+          hostPort: 18080
+          protocol: TCP
+      securityContext:
+        privileged: true
