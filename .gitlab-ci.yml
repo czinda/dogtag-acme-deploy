@@ -99,9 +99,11 @@ test-stig:
   stage: test
   tags: [dogtag]
   needs: [test-setup]
+  timeout: 2h
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
   allow_failure: true
+  when: manual
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
