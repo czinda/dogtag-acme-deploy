@@ -1,0 +1,152 @@
+# =============================================================================
+# Dogtag PKI CA + ACME — GitLab CI/CD Pipeline
+#
+# Builds container images, deploys in a pod, runs 18 tests, exports images.
+#
+# Required CI/CD Variables (Settings → CI/CD → Variables):
+#   RHSM_USERNAME  — Red Hat Subscription Manager username
+#   RHSM_PASSWORD  — Red Hat Subscription Manager password (masked)
+#
+# Runner requirements:
+#   - Privileged container or shell executor with podman installed
+#   - x86_64 architecture (no QEMU emulation needed)
+#
+# Generated-by: Claude Code (claude.ai/code)
+# =============================================================================
+
+stages:
+  - build
+  - deploy
+  - test
+  - export
+
+variables:
+  DS_IMAGE: dogtag-ds:${CI_COMMIT_SHORT_SHA}
+  CA_IMAGE: dogtag-ca:${CI_COMMIT_SHORT_SHA}
+
+# ── Build Images ──────────────────────────────────────────────────────────────
+
+build-ds:
+  stage: build
+  script:
+    - podman build
+        --build-arg RHSM_USER="${RHSM_USERNAME}"
+        --build-arg RHSM_PASS="${RHSM_PASSWORD}"
+        -t ${DS_IMAGE}
+        -f containers/ds/Containerfile .
+    - podman tag ${DS_IMAGE} dogtag-ds:latest
+    - podman run --rm dogtag-ds:latest rpm -q 389-ds-base
+  tags:
+    - podman
+
+build-ca:
+  stage: build
+  script:
+    - podman build
+        --build-arg RHSM_USER="${RHSM_USERNAME}"
+        --build-arg RHSM_PASS="${RHSM_PASSWORD}"
+        -t ${CA_IMAGE}
+        -f containers/ca/Containerfile .
+    - podman tag ${CA_IMAGE} dogtag-ca:latest
+    - podman run --rm dogtag-ca:latest rpm -q redhat-pki-ca redhat-pki-acme
+  tags:
+    - podman
+
+# ── Deploy Pod ────────────────────────────────────────────────────────────────
+
+deploy:
+  stage: deploy
+  script:
+    - podman kube play dogtag-pki-pod.yaml
+
+    # Wait for DS
+    - |
+      for i in $(seq 1 30); do
+        podman exec dogtag-pki-ds dsctl pki-ds status 2>/dev/null && break
+        sleep 5
+      done
+
+    # Wait for CA + ACME
+    - |
+      for i in $(seq 1 60); do
+        podman exec dogtag-pki-ca curl -sk https://localhost:8443/acme/directory 2>/dev/null | grep -q newNonce && break
+        sleep 10
+      done
+
+    # Verify
+    - podman exec dogtag-pki-ca curl -sk https://localhost:8443/ca/admin/ca/getStatus
+    - podman exec dogtag-pki-ca curl -sk https://localhost:8443/acme/directory
+  after_script:
+    - podman pod ps
+    - podman ps --filter pod=dogtag-pki
+  tags:
+    - podman
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+test-setup:
+  stage: test
+  script:
+    - |
+      podman exec dogtag-pki-ca bash -c '
+        certutil -L -d /etc/pki/pki-tomcat/alias -n "caSigningCert cert-pki-tomcat CA" -a > /tmp/ca.crt
+        pki -d /root/.dogtag/nssdb -c Secret.123 client-init --force 2>/dev/null
+        echo "Secret.123" > /root/.dogtag/nssdb/password.txt && chmod 600 /root/.dogtag/nssdb/password.txt
+        certutil -A -d /root/.dogtag/nssdb -n "CA Signing Certificate" -t "CT,C,C" -a -i /tmp/ca.crt -f /root/.dogtag/nssdb/password.txt
+        pki -d /root/.dogtag/nssdb -c Secret.123 pkcs12-import --pkcs12 /root/.dogtag/pki-tomcat/ca_admin_cert.p12 --password Secret.123 2>/dev/null
+        echo "CLI ready"
+      '
+  tags:
+    - podman
+
+test-basic:
+  stage: test
+  needs: ["test-setup"]
+  script:
+    - podman exec dogtag-pki-ca bash /usr/local/bin/test-acme-issue.sh
+  tags:
+    - podman
+
+test-comprehensive:
+  stage: test
+  needs: ["test-setup"]
+  script:
+    - podman exec dogtag-pki-ca bash /usr/local/bin/test-comprehensive.sh
+  tags:
+    - podman
+
+test-stig:
+  stage: test
+  needs: ["test-setup"]
+  script:
+    - podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
+  allow_failure: true
+  tags:
+    - podman
+
+# ── Export Images ─────────────────────────────────────────────────────────────
+
+export-images:
+  stage: export
+  script:
+    - podman save -o dogtag-ds.tar dogtag-ds:latest
+    - podman save -o dogtag-ca.tar dogtag-ca:latest
+  artifacts:
+    paths:
+      - dogtag-ds.tar
+      - dogtag-ca.tar
+    expire_in: 7 days
+  when: manual
+  tags:
+    - podman
+
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+
+cleanup:
+  stage: .post
+  script:
+    - podman kube down dogtag-pki-pod.yaml || true
+    - podman pod rm -f dogtag-pki || true
+  when: always
+  tags:
+    - podman
