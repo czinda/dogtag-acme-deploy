@@ -109,13 +109,10 @@ export-images:
   stage: export
   tags: [dogtag]
   script:
-    - podman save -o dogtag-ds.tar dogtag-ds:latest
-    - podman save -o dogtag-ca.tar dogtag-ca:latest
-  artifacts:
-    paths:
-      - dogtag-ds.tar
-      - dogtag-ca.tar
-    expire_in: 7 days
+    - mkdir -p /srv/gitlab-runner/exports
+    - podman save -o /srv/gitlab-runner/exports/dogtag-ds.tar dogtag-ds:latest
+    - podman save -o /srv/gitlab-runner/exports/dogtag-ca.tar dogtag-ca:latest
+    - ls -lh /srv/gitlab-runner/exports/*.tar
   when: manual
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
