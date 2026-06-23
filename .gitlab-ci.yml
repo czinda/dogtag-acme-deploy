@@ -28,6 +28,8 @@ variables:
 
 build-ds:
   stage: build
+  tags:
+    - dogtag
   script:
     - podman build
         --build-arg RHSM_USER="${RHSM_USERNAME}"
@@ -39,6 +41,8 @@ build-ds:
 
 build-ca:
   stage: build
+  tags:
+    - dogtag
   script:
     - podman build
         --build-arg RHSM_USER="${RHSM_USERNAME}"
@@ -52,6 +56,8 @@ build-ca:
 
 deploy:
   stage: deploy
+  tags:
+    - dogtag
   script:
     - podman kube play dogtag-pki-pod.yaml
 
@@ -80,6 +86,8 @@ deploy:
 
 test-setup:
   stage: test
+  tags:
+    - dogtag
   script:
     - |
       podman exec dogtag-pki-ca bash -c '
@@ -93,18 +101,24 @@ test-setup:
 
 test-basic:
   stage: test
+  tags:
+    - dogtag
   needs: ["test-setup"]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/test-acme-issue.sh
 
 test-comprehensive:
   stage: test
+  tags:
+    - dogtag
   needs: ["test-setup"]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/test-comprehensive.sh
 
 test-stig:
   stage: test
+  tags:
+    - dogtag
   needs: ["test-setup"]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
@@ -114,6 +128,8 @@ test-stig:
 
 export-images:
   stage: export
+  tags:
+    - dogtag
   script:
     - podman save -o dogtag-ds.tar dogtag-ds:latest
     - podman save -o dogtag-ca.tar dogtag-ca:latest
@@ -128,6 +144,8 @@ export-images:
 
 cleanup:
   stage: .post
+  tags:
+    - dogtag
   script:
     - podman kube down dogtag-pki-pod.yaml || true
     - podman pod rm -f dogtag-pki || true
