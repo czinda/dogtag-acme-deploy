@@ -36,8 +36,6 @@ build-ds:
         -f containers/ds/Containerfile .
     - podman tag ${DS_IMAGE} dogtag-ds:latest
     - podman run --rm dogtag-ds:latest rpm -q 389-ds-base
-  tags:
-    - podman
 
 build-ca:
   stage: build
@@ -49,8 +47,6 @@ build-ca:
         -f containers/ca/Containerfile .
     - podman tag ${CA_IMAGE} dogtag-ca:latest
     - podman run --rm dogtag-ca:latest rpm -q redhat-pki-ca redhat-pki-acme
-  tags:
-    - podman
 
 # ── Deploy Pod ────────────────────────────────────────────────────────────────
 
@@ -79,8 +75,6 @@ deploy:
   after_script:
     - podman pod ps
     - podman ps --filter pod=dogtag-pki
-  tags:
-    - podman
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
@@ -96,24 +90,18 @@ test-setup:
         pki -d /root/.dogtag/nssdb -c Secret.123 pkcs12-import --pkcs12 /root/.dogtag/pki-tomcat/ca_admin_cert.p12 --password Secret.123 2>/dev/null
         echo "CLI ready"
       '
-  tags:
-    - podman
 
 test-basic:
   stage: test
   needs: ["test-setup"]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/test-acme-issue.sh
-  tags:
-    - podman
 
 test-comprehensive:
   stage: test
   needs: ["test-setup"]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/test-comprehensive.sh
-  tags:
-    - podman
 
 test-stig:
   stage: test
@@ -121,8 +109,6 @@ test-stig:
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
   allow_failure: true
-  tags:
-    - podman
 
 # ── Export Images ─────────────────────────────────────────────────────────────
 
@@ -137,8 +123,6 @@ export-images:
       - dogtag-ca.tar
     expire_in: 7 days
   when: manual
-  tags:
-    - podman
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
@@ -148,5 +132,3 @@ cleanup:
     - podman kube down dogtag-pki-pod.yaml || true
     - podman pod rm -f dogtag-pki || true
   when: always
-  tags:
-    - podman
