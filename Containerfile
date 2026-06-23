@@ -14,7 +14,7 @@
 #
 # Generated-by: Claude Code (claude.ai/code)
 # =============================================================================
-FROM registry.redhat.io/ubi8/ubi-init
+FROM registry.access.redhat.com/ubi8/ubi-init
 
 LABEL name="dogtag-acme" \
       summary="Dogtag PKI CA + ACME Responder (RHCS 11.9, STIG-hardened)" \

@@ -1,4 +1,4 @@
-FROM registry.redhat.io/ubi8/ubi-init
+FROM registry.access.redhat.com/ubi8/ubi-init
 
 LABEL name="dogtag-ca" \
       summary="Dogtag PKI Certificate Authority (RHCS 11.9, STIG-hardened)"

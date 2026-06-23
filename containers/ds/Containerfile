@@ -1,4 +1,4 @@
-FROM registry.redhat.io/ubi8/ubi-init
+FROM registry.access.redhat.com/ubi8/ubi-init
 
 LABEL name="dogtag-ds" \
       summary="389 Directory Server for Dogtag PKI (STIG-hardened)"

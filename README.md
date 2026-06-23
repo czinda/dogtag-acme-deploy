@@ -124,7 +124,7 @@ podman run -d --name dogtag-acme --privileged --systemd=true \
 
 **Container deployments:**
 - Podman with `podman machine` running (macOS) or native Podman (Linux)
-- `podman login registry.redhat.io` (Red Hat container registry access)
+- No registry login needed — UBI base images are public on `registry.access.redhat.com`
 - RHSM credentials for image builds (stored in `~/.claude/.env.age` as `RHSM_USERNAME`/`RHSM_PASSWORD`)
 - RHCS is **x86_64 only** — Apple Silicon uses `--platform linux/amd64` (QEMU emulation)
 

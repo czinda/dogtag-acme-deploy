@@ -20,12 +20,8 @@ Complete instructions for every deployment method. Pick the one that fits your e
    podman machine init --cpus 4 --memory 4096 --disk-size 40
    podman machine start
    ```
-3. **Authenticate to Red Hat registry:**
-   ```bash
-   podman login registry.redhat.io
-   # Use your Red Hat Customer Portal credentials
-   ```
-4. **RHSM credentials** for image builds (Red Hat Subscription Manager)
+3. **No registry login needed** — UBI base images are public on `registry.access.redhat.com`
+4. **RHSM credentials** for image builds (Red Hat Subscription Manager — needed to install RHCS packages inside the image, not for pulling the base image)
 
 ### macOS / Linux
 
