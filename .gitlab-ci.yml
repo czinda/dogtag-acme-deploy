@@ -5,11 +5,9 @@
 #
 # Required CI/CD Variables (Settings → CI/CD → Variables):
 #   RHSM_USERNAME  — Red Hat Subscription Manager username
-#   RHSM_PASSWORD  — Red Hat Subscription Manager password (masked)
+#   RHSM_PASSWORD  — Red Hat Subscription Manager password
 #
-# Runner requirements:
-#   - Privileged container or shell executor with podman installed
-#   - x86_64 architecture (no QEMU emulation needed)
+# Runner: shell executor with podman, tagged 'dogtag'
 #
 # Generated-by: Claude Code (claude.ai/code)
 # =============================================================================
@@ -24,58 +22,43 @@ variables:
   DS_IMAGE: dogtag-ds:${CI_COMMIT_SHORT_SHA}
   CA_IMAGE: dogtag-ca:${CI_COMMIT_SHORT_SHA}
 
-# ── Build Images ──────────────────────────────────────────────────────────────
+# ── Build ─────────────────────────────────────────────────────────────────────
 
 build-ds:
   stage: build
-  tags:
-    - dogtag
+  tags: [dogtag]
   script:
-    - podman build
-        --build-arg RHSM_USER="${RHSM_USERNAME}"
-        --build-arg RHSM_PASS="${RHSM_PASSWORD}"
-        -t ${DS_IMAGE}
-        -f containers/ds/Containerfile .
+    - podman build --build-arg RHSM_USER="${RHSM_USERNAME}" --build-arg RHSM_PASS="${RHSM_PASSWORD}" -t ${DS_IMAGE} -f containers/ds/Containerfile .
     - podman tag ${DS_IMAGE} dogtag-ds:latest
     - podman run --rm dogtag-ds:latest rpm -q 389-ds-base
 
 build-ca:
   stage: build
-  tags:
-    - dogtag
+  tags: [dogtag]
   script:
-    - podman build
-        --build-arg RHSM_USER="${RHSM_USERNAME}"
-        --build-arg RHSM_PASS="${RHSM_PASSWORD}"
-        -t ${CA_IMAGE}
-        -f containers/ca/Containerfile .
+    - podman build --build-arg RHSM_USER="${RHSM_USERNAME}" --build-arg RHSM_PASS="${RHSM_PASSWORD}" -t ${CA_IMAGE} -f containers/ca/Containerfile .
     - podman tag ${CA_IMAGE} dogtag-ca:latest
     - podman run --rm dogtag-ca:latest rpm -q redhat-pki-ca redhat-pki-acme
 
-# ── Deploy Pod ────────────────────────────────────────────────────────────────
+# ── Deploy ────────────────────────────────────────────────────────────────────
 
 deploy:
   stage: deploy
-  tags:
-    - dogtag
+  tags: [dogtag]
   script:
     - podman kube play dogtag-pki-pod.yaml
-
-    # Wait for DS
     - |
+      echo "Waiting for DS..."
       for i in $(seq 1 30); do
         podman exec dogtag-pki-ds dsctl pki-ds status 2>/dev/null && break
         sleep 5
       done
-
-    # Wait for CA + ACME
     - |
+      echo "Waiting for CA + ACME..."
       for i in $(seq 1 60); do
         podman exec dogtag-pki-ca curl -sk https://localhost:8443/acme/directory 2>/dev/null | grep -q newNonce && break
         sleep 10
       done
-
-    # Verify
     - podman exec dogtag-pki-ca curl -sk https://localhost:8443/ca/admin/ca/getStatus
     - podman exec dogtag-pki-ca curl -sk https://localhost:8443/acme/directory
   after_script:
@@ -86,8 +69,7 @@ deploy:
 
 test-setup:
   stage: test
-  tags:
-    - dogtag
+  tags: [dogtag]
   script:
     - |
       podman exec dogtag-pki-ca bash -c '
@@ -101,35 +83,31 @@ test-setup:
 
 test-basic:
   stage: test
-  tags:
-    - dogtag
-  needs: ["test-setup"]
+  tags: [dogtag]
+  needs: [test-setup]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/test-acme-issue.sh
 
 test-comprehensive:
   stage: test
-  tags:
-    - dogtag
-  needs: ["test-setup"]
+  tags: [dogtag]
+  needs: [test-setup]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/test-comprehensive.sh
 
 test-stig:
   stage: test
-  tags:
-    - dogtag
-  needs: ["test-setup"]
+  tags: [dogtag]
+  needs: [test-setup]
   script:
     - podman exec dogtag-pki-ca bash /usr/local/bin/harden-stig.sh --scan-only
   allow_failure: true
 
-# ── Export Images ─────────────────────────────────────────────────────────────
+# ── Export ────────────────────────────────────────────────────────────────────
 
 export-images:
   stage: export
-  tags:
-    - dogtag
+  tags: [dogtag]
   script:
     - podman save -o dogtag-ds.tar dogtag-ds:latest
     - podman save -o dogtag-ca.tar dogtag-ca:latest
@@ -144,8 +122,7 @@ export-images:
 
 cleanup:
   stage: .post
-  tags:
-    - dogtag
+  tags: [dogtag]
   script:
     - podman kube down dogtag-pki-pod.yaml || true
     - podman pod rm -f dogtag-pki || true
